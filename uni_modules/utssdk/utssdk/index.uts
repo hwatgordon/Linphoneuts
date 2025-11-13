@@ -1,0 +1,250 @@
+type JsonRecord = Record<string, any>
+
+type EventHandler = (payload: JsonRecord) => void
+
+type NativeBridge = {
+    initialize?: (config: JsonRecord) => any,
+    register?: () => void,
+    unregister?: () => void,
+    callDial?: (number: string) => void,
+    callHangup?: () => void,
+    callAnswer?: () => void,
+    sendDtmf?: (tone: string) => void,
+    messageSend?: (recipient: string, text: string) => void,
+    audioSetRoute?: (route: string) => void,
+    setEventCallback?: (callback: (type: string, payload: JsonRecord) => void) => void,
+    clearEventCallback?: () => void,
+    setEventListener?: (listener: {
+        onEvent: (type: string, payload: JsonRecord) => void,
+        onError: (category: string, message: string) => void
+    }) => void
+}
+
+// TODO: Align candidate plugin identifiers with the final native registration names.
+const PLUGIN_CANDIDATES: string[] = ['utssdk-linphone', 'LinphoneBridge', 'Linphone']
+
+const listeners: Map<string, Set<EventHandler>> = new Map()
+let bridgeInstance: NativeBridge | null = null
+let activePluginName: string | null = null
+let eventPumpInstalled = false
+
+function getBridge(): NativeBridge | null {
+    if (bridgeInstance) {
+        return bridgeInstance
+    }
+
+    for (const candidate of PLUGIN_CANDIDATES) {
+        try {
+            // @ts-ignore The API is provided by runtime
+            bridgeInstance = uni.requireNativePlugin(candidate) as NativeBridge
+            if (bridgeInstance) {
+                activePluginName = candidate
+                break
+            }
+        } catch (error) {
+            console.warn(`[linphone] Failed to load native bridge '${candidate}': ${error}`)
+            bridgeInstance = null
+        }
+    }
+
+    if (!bridgeInstance) {
+        console.warn('[linphone] Native bridge not available for any known candidate id')
+    }
+
+    return bridgeInstance
+}
+
+function ensureEventPump() {
+    const bridge = getBridge()
+    if (!bridge || eventPumpInstalled) {
+        return
+    }
+
+    if (typeof bridge.setEventCallback === 'function') {
+        bridge.setEventCallback(handleNativeEvent)
+        eventPumpInstalled = true
+        return
+    }
+
+    if (typeof bridge.setEventListener === 'function') {
+        bridge.setEventListener({
+            onEvent: (type: string, payload: JsonRecord) => handleNativeEvent(type, payload ?? {}),
+            onError: (category: string, message: string) => handleNativeEvent('error', {
+                category,
+                message
+            })
+        })
+        eventPumpInstalled = true
+        return
+    }
+
+    console.warn('[linphone] Native bridge does not provide an event callback API yet')
+}
+
+function handleNativeEvent(type: string, payload: JsonRecord | null | undefined) {
+    const safeType = type ?? 'unknown'
+    const safePayload = (payload ?? {}) as JsonRecord
+
+    const handlers = listeners.get(safeType)
+    if (handlers) {
+        handlers.forEach((handler) => {
+            try {
+                handler(safePayload)
+            } catch (error) {
+                console.error('[linphone] Listener error', error)
+            }
+        })
+    }
+}
+
+function notifyMissingBridge(operation: string) {
+    const pluginId = activePluginName ?? 'unknown'
+    console.warn(`[linphone] Ignoring ${operation} call because the native bridge (${pluginId}) is unavailable`)
+}
+
+export type LinphoneConfig = JsonRecord
+export type AudioRoute = 'system' | 'speaker' | 'earpiece' | 'bluetooth'
+
+export const AudioRoutes: Record<string, AudioRoute> = {
+    SYSTEM: 'system',
+    SPEAKER: 'speaker',
+    EARPIECE: 'earpiece',
+    BLUETOOTH: 'bluetooth'
+}
+
+export async function init(config: LinphoneConfig = {}): Promise<boolean> {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.initialize !== 'function') {
+        notifyMissingBridge('init')
+        return false
+    }
+
+    ensureEventPump()
+
+    try {
+        const result = bridge.initialize(config)
+        return result !== false
+    } catch (error) {
+        console.error('[linphone] Failed to initialize bridge', error)
+        handleNativeEvent('error', {
+            category: 'initialize',
+            message: `${error}`
+        })
+        return false
+    }
+}
+
+export function register(): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.register !== 'function') {
+        notifyMissingBridge('register')
+        return
+    }
+    ensureEventPump()
+    bridge.register()
+}
+
+export function unregister(): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.unregister !== 'function') {
+        notifyMissingBridge('unregister')
+        return
+    }
+    ensureEventPump()
+    bridge.unregister()
+}
+
+export function dial(number: string): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.callDial !== 'function') {
+        notifyMissingBridge('callDial')
+        return
+    }
+    ensureEventPump()
+    bridge.callDial(number)
+}
+
+export function hangup(): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.callHangup !== 'function') {
+        notifyMissingBridge('callHangup')
+        return
+    }
+    ensureEventPump()
+    bridge.callHangup()
+}
+
+export function answer(): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.callAnswer !== 'function') {
+        notifyMissingBridge('callAnswer')
+        return
+    }
+    ensureEventPump()
+    bridge.callAnswer()
+}
+
+export function sendDtmf(tone: string): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.sendDtmf !== 'function') {
+        notifyMissingBridge('sendDtmf')
+        return
+    }
+    ensureEventPump()
+    bridge.sendDtmf(tone)
+}
+
+export function sendMessage(recipient: string, text: string): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.messageSend !== 'function') {
+        notifyMissingBridge('messageSend')
+        return
+    }
+    ensureEventPump()
+    bridge.messageSend(recipient, text)
+}
+
+export function setAudioRoute(route: AudioRoute): void {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.audioSetRoute !== 'function') {
+        notifyMissingBridge('audioSetRoute')
+        return
+    }
+    ensureEventPump()
+    bridge.audioSetRoute(route)
+}
+
+export function addEventListener(eventName: string, handler: EventHandler): void {
+    ensureEventPump()
+
+    if (!listeners.has(eventName)) {
+        listeners.set(eventName, new Set())
+    }
+
+    listeners.get(eventName)!.add(handler)
+}
+
+export function removeEventListener(eventName: string, handler: EventHandler): void {
+    const handlers = listeners.get(eventName)
+    if (!handlers) {
+        return
+    }
+    handlers.delete(handler)
+
+    if (handlers.size === 0) {
+        listeners.delete(eventName)
+
+        if (listeners.size === 0) {
+            const bridge = getBridge()
+            if (bridge) {
+                if (typeof bridge.clearEventCallback === 'function') {
+                    bridge.clearEventCallback()
+                } else if (typeof bridge.setEventListener === 'function') {
+                    // @ts-ignore The runtime bridge accepts null to clear listeners
+                    bridge.setEventListener(null)
+                }
+            }
+            eventPumpInstalled = false
+        }
+    }
+}
