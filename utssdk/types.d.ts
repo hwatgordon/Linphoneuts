@@ -12,7 +12,7 @@ export type MessageEvent = 'received' | 'sent' | 'failed';
 
 export type AudioRoute = 'system' | 'earpiece' | 'speaker' | 'bluetooth';
 
-export type AudioRouteState = 'earpiece' | 'speaker' | 'bluetooth' | 'unknown';
+export type AudioRouteState = 'system' | 'earpiece' | 'speaker' | 'bluetooth' | 'unknown';
 
 export interface SipConfig {
   sipServer: string;
@@ -28,6 +28,18 @@ export interface MessagePayload {
   text: string;
 }
 
+export interface AudioDeviceSummary {
+  id: string;
+  name: string;
+  type: AudioRouteState;
+  selected: boolean;
+}
+
+export interface DeviceEventPayload {
+  devices: AudioDeviceSummary[];
+  activeRoute?: AudioRouteState;
+}
+
 export interface NormalizedError {
   code: string;
   message: string;
@@ -37,6 +49,7 @@ export type RegistrationHandler = (state: RegistrationState, detail?: any) => vo
 export type CallHandler = (state: CallState, detail?: any) => void;
 export type MessageHandler = (event: MessageEvent, payload: MessagePayload) => void;
 export type AudioRouteHandler = (route: AudioRouteState) => void;
+export type DeviceHandler = (payload: DeviceEventPayload) => void;
 
 /**
  * Initializes the telephony stack with SIP credentials.
@@ -52,6 +65,16 @@ export declare function register(): Promise<void>;
  * Unregisters the SIP account from the active platform implementation.
  */
 export declare function unregister(): Promise<void>;
+
+/**
+ * Retrieves the current state snapshot from the underlying platform.
+ */
+export declare function getState(): Promise<Record<string, any>>;
+
+/**
+ * Disposes the underlying platform instance and releases resources.
+ */
+export declare function dispose(): Promise<void>;
 
 export declare const call: {
   /**
@@ -97,3 +120,6 @@ export declare function offMessage(handler: MessageHandler): void;
 
 export declare function onAudioRouteChanged(handler: AudioRouteHandler): void;
 export declare function offAudioRouteChanged(handler: AudioRouteHandler): void;
+
+export declare function onDevicesChanged(handler: DeviceHandler): void;
+export declare function offDevicesChanged(handler: DeviceHandler): void;
