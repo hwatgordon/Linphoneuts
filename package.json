@@ -1,0 +1,44 @@
+{
+  "name": "cross-platform-mobile-plugin",
+  "version": "1.0.0",
+  "description": "Cross-platform mobile plugins for iOS and Android with UniApp integration",
+  "main": "index.js",
+  "scripts": {
+    "setup": "npm install && npm run setup:ios && npm run setup:android && npm run setup:demo",
+    "setup:ios": "cd ios-plugin && pod install",
+    "setup:android": "cd android-plugin && ./gradlew build",
+    "setup:demo": "cd uniapp-demo && npm install",
+    "build": "npm run build:ios && npm run build:android && npm run build:demo",
+    "build:ios": "cd ios-plugin && xcodebuild -workspace *.xcworkspace -scheme * build",
+    "build:android": "cd android-plugin && ./gradlew assembleRelease",
+    "build:demo": "cd uniapp-demo && npm run build:h5",
+    "test": "npm run test:ios && npm run test:android && npm run test:demo",
+    "test:ios": "cd ios-plugin && xcodebuild test",
+    "test:android": "cd android-plugin && ./gradlew test",
+    "test:demo": "cd uniapp-demo && npm run test",
+    "lint": "npm run lint:ios && npm run lint:android && npm run lint:demo",
+    "lint:ios": "cd ios-plugin && swiftlint",
+    "lint:android": "cd android-plugin && ./gradlew lint",
+    "lint:demo": "cd uniapp-demo && npm run lint"
+  },
+  "keywords": [
+    "mobile",
+    "plugin",
+    "ios",
+    "android",
+    "uniapp",
+    "cross-platform"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "devDependencies": {
+    "concurrently": "^7.6.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
