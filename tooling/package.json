@@ -1,0 +1,33 @@
+{
+  "name": "cross-platform-plugin-tooling",
+  "version": "1.0.0",
+  "description": "Development tooling for cross-platform mobile plugin project",
+  "main": "index.js",
+  "scripts": {
+    "build": "node scripts/build-all.js",
+    "build:ios": "node scripts/build-ios.js",
+    "build:android": "node scripts/build-android.js", 
+    "build:demo": "node scripts/build-demo.js",
+    "test": "node scripts/test-runner.js",
+    "test:ios": "bash scripts/test-ios.sh",
+    "test:android": "bash scripts/test-android.sh",
+    "test:demo": "node scripts/test-demo.js",
+    "lint": "npm run lint:ios && npm run lint:android && npm run lint:demo",
+    "lint:ios": "swiftlint --path ../ios-plugin",
+    "lint:android": "cd ../android-plugin && ./gradlew lint",
+    "lint:demo": "cd ../uniapp-demo && npm run lint",
+    "generate:plugin": "node scripts/generate-plugin.js",
+    "setup": "node scripts/setup-project.js",
+    "clean": "node scripts/clean-build.js"
+  },
+  "devDependencies": {
+    "concurrently": "^7.6.0",
+    "fs-extra": "^11.1.0",
+    "inquirer": "^9.1.4",
+    "chalk": "^5.2.0",
+    "ora": "^6.1.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
