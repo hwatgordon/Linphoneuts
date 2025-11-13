@@ -1,0 +1,6 @@
+framework module LinlinCore {
+    umbrella header "LinlinCore.h"
+    
+    export *
+    module * { export * }
+}
