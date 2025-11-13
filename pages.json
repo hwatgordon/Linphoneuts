@@ -1,0 +1,43 @@
+{
+  "pages": [
+    {
+      "path": "pages/test/index",
+      "style": {
+        "navigationBarTitleText": "Demo Launcher"
+      }
+    },
+    {
+      "path": "pages/registration/index",
+      "style": {
+        "navigationBarTitleText": "Registration"
+      }
+    },
+    {
+      "path": "pages/dialer/index",
+      "style": {
+        "navigationBarTitleText": "Dialer"
+      }
+    },
+    {
+      "path": "pages/call/index",
+      "style": {
+        "navigationBarTitleText": "Call"
+      }
+    },
+    {
+      "path": "pages/messages/index",
+      "style": {
+        "navigationBarTitleText": "Messages"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarBackgroundColor": "#0f172a",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f8fafc",
+    "navigationBarTitleText": "UTS Demo"
+  },
+  "easycom": {
+    "^event-log$": "@/components/EventLog.vue"
+  }
+}
