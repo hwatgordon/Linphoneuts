@@ -1,530 +1,257 @@
-/**
- * Unified Telephony Service (UTS) cross-platform entrypoint.
- *
- * All methods delegate to a platform-specific implementation resolved at runtime.
- * Each method exposes a Promise-based API with normalized error objects and predictable
- * event dispatch semantics.
- */
+import coreService, { PLATFORM_SHIM_REGISTRY } from './core/service';
+import type { CoreServiceManager } from './core/service';
+import type {
+  CoreEventName,
+  EventHandler,
+  EventPayloadMap,
+  RegistrationEventPayload,
+  CallEventPayload,
+  MessageEventPayload,
+  AudioRouteEventPayload,
+  DeviceChangeEventPayload,
+  ConnectivityEventPayload
+} from './core/events';
+import type {
+  AudioRoute,
+  AudioRouteState,
+  CallState,
+  ConnectivityStatus,
+  DeviceDescriptor,
+  MessageEvent,
+  MessagePayload,
+  NormalizedError,
+  RegistrationState,
+  SipConfig,
+  TransportKind
+} from './core/types';
 
-declare const plus: any;
-declare const uni: any;
-
-type TransportKind = 'udp' | 'tcp' | 'tls';
-
-type RegistrationState = 'none' | 'progress' | 'ok' | 'failed';
-
-type CallState = 'incoming' | 'outgoing' | 'connected' | 'ended' | 'error';
-
-type MessageEvent = 'received' | 'sent' | 'failed';
-
-type AudioRoute = 'system' | 'earpiece' | 'speaker' | 'bluetooth';
-
-type AudioRouteState = 'earpiece' | 'speaker' | 'bluetooth' | 'unknown';
-
-interface SipConfig {
-  sipServer: string;
-  username: string;
-  password: string;
-  transport?: TransportKind;
-  displayName?: string;
-}
-
-interface MessagePayload {
-  from?: string;
-  to?: string;
-  text: string;
-}
-
-interface NormalizedError {
-  code: string;
-  message: string;
-}
-
-interface PlatformEventMap {
-  registration: { state: RegistrationState; detail?: any };
-  call: { state: CallState; detail?: any };
-  message: { event: MessageEvent; payload: MessagePayload };
-  audioRoute: { route: AudioRouteState };
-}
-
-type PlatformEventName = keyof PlatformEventMap;
-
-type PlatformEventHandler<K extends PlatformEventName> = (payload: PlatformEventMap[K]) => void;
-
-interface PlatformShim {
-  init(config: SipConfig): Promise<void>;
-  register(): Promise<void>;
-  unregister(): Promise<void>;
-  call: {
-    dial(number: string): Promise<void>;
-    hangup(): Promise<void>;
-    answer(): Promise<void>;
-    sendDtmf(tone: string): Promise<void>;
-  };
-  message: {
-    send(to: string, text: string): Promise<void>;
-  };
-  audio: {
-    setRoute(route: AudioRoute): Promise<void>;
-  };
-  subscribe<K extends PlatformEventName>(event: K, handler: PlatformEventHandler<K>): void;
-  unsubscribe<K extends PlatformEventName>(event: K, handler: PlatformEventHandler<K>): void;
-}
-
-interface ListenerRegistry {
-  registration: Set<(state: RegistrationState, detail?: any) => void>;
-  call: Set<(state: CallState, detail?: any) => void>;
-  message: Set<(event: MessageEvent, payload: MessagePayload) => void>;
-  audioRoute: Set<(route: AudioRouteState) => void>;
-}
-
-interface SubscriptionState {
-  registration: boolean;
-  call: boolean;
-  message: boolean;
-  audioRoute: boolean;
-}
-
-const GLOBAL_SHIM_REGISTRY = '__UTSSDK_PLATFORM_SHIMS__';
-
-const listeners: ListenerRegistry = {
-  registration: new Set(),
-  call: new Set(),
-  message: new Set(),
-  audioRoute: new Set()
+export type {
+  AudioRoute,
+  AudioRouteState,
+  CallState,
+  ConnectivityStatus,
+  DeviceDescriptor,
+  MessageEvent,
+  MessagePayload,
+  NormalizedError,
+  RegistrationState,
+  SipConfig,
+  TransportKind,
+  CoreEventName,
+  EventHandler,
+  EventPayloadMap,
+  RegistrationEventPayload,
+  CallEventPayload,
+  MessageEventPayload,
+  AudioRouteEventPayload,
+  DeviceChangeEventPayload,
+  ConnectivityEventPayload,
+  CoreServiceManager
 };
 
-const subscriptionState: SubscriptionState = {
-  registration: false,
-  call: false,
-  message: false,
-  audioRoute: false
-};
+export { EventBus } from './core/events';
 
-const platformBridgeHandlers: {
-  [K in PlatformEventName]: PlatformEventHandler<K>;
-} = {
-  registration(payload) {
-    listeners.registration.forEach((handler) => {
-      invokeListener(() => handler(payload.state, payload.detail));
-    });
-  },
-  call(payload) {
-    listeners.call.forEach((handler) => {
-      invokeListener(() => handler(payload.state, payload.detail));
-    });
-  },
-  message(payload) {
-    listeners.message.forEach((handler) => {
-      invokeListener(() => handler(payload.event, payload.payload));
-    });
-  },
-  audioRoute(payload) {
-    listeners.audioRoute.forEach((handler) => {
-      invokeListener(() => handler(payload.route));
-    });
-  }
-};
+export const GLOBAL_SHIM_REGISTRY = PLATFORM_SHIM_REGISTRY;
 
-type PlatformIdentifier = 'app-ios' | 'app-android' | 'web' | 'unknown';
+export const events = coreService.getEvents();
 
-let preferredAudioRoute: AudioRoute = 'system';
-
-const platformShim: PlatformShim = resolvePlatformShim();
-
-function safeString(value: any, fallback: string): string {
-  if (typeof value === 'string' && value.length > 0) {
-    return value;
-  }
-  if (value === undefined || value === null) {
-    return fallback;
-  }
-  try {
-    return String(value);
-  } catch (_) {
-    return fallback;
-  }
-}
-
-function normalizeError(error: any): NormalizedError {
-  if (!error) {
-    return { code: 'unknown', message: 'Unknown error' };
-  }
-  if (typeof error === 'string') {
-    return { code: 'unknown', message: error };
-  }
-  if (typeof error === 'object') {
-    const errObject = error as any;
-    const code = safeString(errObject.code ?? errObject.errCode ?? errObject.errorCode, 'unknown');
-    const message = safeString(errObject.message ?? errObject.errMsg ?? errObject.errorMessage, 'Unexpected platform error');
-    return { code, message };
-  }
-  return { code: 'unknown', message: safeString(error, 'Unknown error') };
-}
-
-function invokeListener(fn: () => void): void {
-  try {
-    fn();
-  } catch (error) {
-    console.error('utssdk listener execution failed', error);
-  }
-}
-
-function detectPlatform(): PlatformIdentifier {
-  try {
-    if (typeof plus !== 'undefined' && plus !== null && plus.os && typeof plus.os.name === 'string') {
-      const osName = plus.os.name.toLowerCase();
-      if (osName === 'android') {
-        return 'app-android';
-      }
-      if (osName === 'ios') {
-        return 'app-ios';
-      }
-      return 'unknown';
-    }
-  } catch (error) {
-    console.warn('utssdk platform detection via plus failed', error);
-  }
-
-  try {
-    const info = (uni as any).getSystemInfoSync?.();
-    if (info && typeof info.platform === 'string') {
-      const platform = info.platform.toLowerCase();
-      if (platform === 'android') {
-        return 'app-android';
-      }
-      if (platform === 'ios') {
-        return 'app-ios';
-      }
-      if (platform === 'web' || platform === 'h5') {
-        return 'web';
-      }
-    }
-  } catch (error) {
-    console.warn('utssdk platform detection via uni failed', error);
-  }
-
-  return 'unknown';
-}
-
-function resolvePlatformShim(): PlatformShim {
-  const platform = detectPlatform();
-  const shimFromRegistry = lookupPlatformShim(platform) ?? lookupPlatformShim('web') ?? lookupPlatformShim('unknown');
-  if (shimFromRegistry) {
-    return shimFromRegistry;
-  }
-  return createUnsupportedPlatformShim(platform);
-}
-
-function lookupPlatformShim(platform: PlatformIdentifier): PlatformShim | null {
-  try {
-    const globalRegistry = (globalThis as any)[GLOBAL_SHIM_REGISTRY];
-    if (globalRegistry && platform in globalRegistry) {
-      return globalRegistry[platform] as PlatformShim;
-    }
-  } catch (error) {
-    console.warn('utssdk failed to read platform shim registry', error);
-  }
-  return null;
-}
-
-function createUnsupportedPlatformShim(platform: PlatformIdentifier): PlatformShim {
-  const notSupported = async (): Promise<void> => {
-    throw normalizeError({
-      code: 'platform_unsupported',
-      message: `UTS SDK is not available on platform: ${platform}`
-    });
-  };
-
-  return {
-    async init(_: SipConfig): Promise<void> {
-      await notSupported();
-    },
-    async register(): Promise<void> {
-      await notSupported();
-    },
-    async unregister(): Promise<void> {
-      await notSupported();
-    },
-    call: {
-      async dial(): Promise<void> {
-        await notSupported();
-      },
-      async hangup(): Promise<void> {
-        await notSupported();
-      },
-      async answer(): Promise<void> {
-        await notSupported();
-      },
-      async sendDtmf(): Promise<void> {
-        await notSupported();
-      }
-    },
-    message: {
-      async send(): Promise<void> {
-        await notSupported();
-      }
-    },
-    audio: {
-      async setRoute(): Promise<void> {
-        await notSupported();
-      }
-    },
-    subscribe() {
-      // No-op for unsupported platform.
-    },
-    unsubscribe() {
-      // No-op for unsupported platform.
-    }
-  };
-}
-
-function bindPlatformEvent<K extends PlatformEventName>(event: K): void {
-  if (subscriptionState[event]) {
-    return;
-  }
-  platformShim.subscribe(event, platformBridgeHandlers[event]);
-  subscriptionState[event] = true;
-}
-
-function unbindPlatformEvent<K extends PlatformEventName>(event: K, registry: Set<any>): void {
-  if (!subscriptionState[event]) {
-    return;
-  }
-  if (registry.size > 0) {
-    return;
-  }
-  platformShim.unsubscribe(event, platformBridgeHandlers[event]);
-  subscriptionState[event] = false;
-}
-
-function ensureValidConfig(config: SipConfig): void {
-  if (!config) {
-    throw normalizeError({ code: 'invalid_config', message: 'Configuration is required.' });
-  }
-  if (!config.sipServer || !config.username || !config.password) {
-    throw normalizeError({ code: 'invalid_config', message: 'sipServer, username, and password are mandatory.' });
-  }
-}
-
-/**
- * Initializes the telephony stack with SIP credentials.
- * The call delegates to the active platform implementation; CallKit is not used.
- */
 export async function init(config: SipConfig): Promise<void> {
-  try {
-    ensureValidConfig(config);
-    await platformShim.init(config);
-    preferredAudioRoute = 'system';
-  } catch (error) {
-    throw normalizeError(error);
-  }
+  return coreService.init(config);
 }
 
-/**
- * Registers the SIP account on the active platform implementation.
- * CallKit is intentionally not involved in this process.
- */
+export async function dispose(): Promise<void> {
+  return coreService.dispose();
+}
+
 export async function register(): Promise<void> {
-  try {
-    await platformShim.register();
-  } catch (error) {
-    throw normalizeError(error);
-  }
+  return coreService.register();
 }
 
-/**
- * Unregisters the SIP account from the active platform implementation.
- */
 export async function unregister(): Promise<void> {
-  try {
-    await platformShim.unregister();
-  } catch (error) {
-    throw normalizeError(error);
-  }
+  return coreService.unregister();
 }
 
-/**
- * Call control methods that are delegated to the platform shim.
- */
 export const call = {
-  /**
-   * Initiates an outgoing call to the specified number.
-   */
-  async dial(number: string): Promise<void> {
-    try {
-      if (!number) {
-        throw normalizeError({ code: 'invalid_number', message: 'The dialed number must not be empty.' });
-      }
-      await platformShim.call.dial(number);
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  dial(number: string): Promise<void> {
+    return coreService.dial(number);
   },
-
-  /**
-   * Terminates the current call session.
-   */
-  async hangup(): Promise<void> {
-    try {
-      await platformShim.call.hangup();
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  hangup(): Promise<void> {
+    return coreService.hangup();
   },
-
-  /**
-   * Answers an incoming call.
-   */
-  async answer(): Promise<void> {
-    try {
-      await platformShim.call.answer();
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  answer(): Promise<void> {
+    return coreService.answer();
   },
-
-  /**
-   * Sends a DTMF tone during an active call.
-   */
-  async sendDtmf(tone: string): Promise<void> {
-    try {
-      if (!tone) {
-        throw normalizeError({ code: 'invalid_tone', message: 'DTMF tone must not be empty.' });
-      }
-      await platformShim.call.sendDtmf(tone);
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  sendDtmf(tone: string): Promise<void> {
+    return coreService.sendDtmf(tone);
   }
 };
 
-/**
- * Messaging helpers delegated to the platform shim.
- */
 export const message = {
-  /**
-   * Sends an instant message using the underlying SIP stack.
-   */
-  async send(to: string, text: string): Promise<void> {
-    try {
-      if (!to) {
-        throw normalizeError({ code: 'invalid_recipient', message: 'Recipient must not be empty.' });
-      }
-      if (!text) {
-        throw normalizeError({ code: 'invalid_message', message: 'Message body must not be empty.' });
-      }
-      await platformShim.message.send(to, text);
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  send(to: string, text: string): Promise<void> {
+    return coreService.sendMessage(to, text);
   }
 };
 
-/**
- * Audio routing controls delegated to the platform shim.
- */
 export const audio = {
-  /**
-   * Sets the audio route preference. When set to `system`, the OS default routing is restored.
-   */
-  async setRoute(route: AudioRoute): Promise<void> {
-    try {
-      if (preferredAudioRoute === route) {
-        return;
-      }
-      preferredAudioRoute = route;
-      await platformShim.audio.setRoute(route);
-    } catch (error) {
-      throw normalizeError(error);
-    }
+  setRoute(route: AudioRoute): Promise<void> {
+    return coreService.setAudioRoute(route);
   }
 };
 
-/**
- * Subscribes to registration state changes emitted by the platform implementation.
- */
-export function onRegistration(handler: (state: RegistrationState, detail?: any) => void): void {
-  if (!handler) {
-    return;
-  }
-  listeners.registration.add(handler);
-  bindPlatformEvent('registration');
+export function on<K extends CoreEventName>(event: K, handler: EventHandler<K>): void {
+  coreService.on(event, handler);
 }
 
-/**
- * Unsubscribes a registration listener.
- */
-export function offRegistration(handler: (state: RegistrationState, detail?: any) => void): void {
-  if (!handler) {
-    return;
-  }
-  listeners.registration.delete(handler);
-  unbindPlatformEvent('registration', listeners.registration);
+export function once<K extends CoreEventName>(event: K, handler: EventHandler<K>): void {
+  coreService.once(event, handler);
 }
 
-/**
- * Subscribes to call state updates without involving CallKit APIs.
- */
-export function onCall(handler: (state: CallState, detail?: any) => void): void {
-  if (!handler) {
-    return;
-  }
-  listeners.call.add(handler);
-  bindPlatformEvent('call');
+export function off<K extends CoreEventName>(event: K, handler: EventHandler<K>): void {
+  coreService.off(event, handler);
 }
 
-/**
- * Removes a call state listener.
- */
-export function offCall(handler: (state: CallState, detail?: any) => void): void {
-  if (!handler) {
-    return;
-  }
-  listeners.call.delete(handler);
-  unbindPlatformEvent('call', listeners.call);
+export function removeAll(event?: CoreEventName): void {
+  coreService.removeAll(event);
 }
 
-/**
- * Subscribes to messaging events from the platform shim.
- */
-export function onMessage(handler: (event: MessageEvent, payload: MessagePayload) => void): void {
-  if (!handler) {
+type RegistrationListener = (state: RegistrationState, detail?: any, error?: NormalizedError | null) => void;
+type CallListener = (state: CallState, detail?: any, error?: NormalizedError | null) => void;
+type MessageListener = (event: MessageEvent, payload: MessagePayload, error?: NormalizedError | null) => void;
+type AudioRouteListener = (route: AudioRouteState, reason?: string) => void;
+type DeviceChangeListener = (payload: DeviceChangeEventPayload) => void;
+type ConnectivityListener = (payload: ConnectivityEventPayload) => void;
+
+const registrationBridge = new WeakMap<RegistrationListener, EventHandler<'registration'>>();
+const callBridge = new WeakMap<CallListener, EventHandler<'call'>>();
+const messageBridge = new WeakMap<MessageListener, EventHandler<'message'>>();
+const audioRouteBridge = new WeakMap<AudioRouteListener, EventHandler<'audioRoute'>>();
+const deviceBridge = new WeakMap<DeviceChangeListener, EventHandler<'deviceChange'>>();
+const connectivityBridge = new WeakMap<ConnectivityListener, EventHandler<'connectivity'>>();
+
+export function onRegistration(handler: RegistrationListener): void {
+  if (!handler || registrationBridge.has(handler)) {
     return;
   }
-  listeners.message.add(handler);
-  bindPlatformEvent('message');
+  const proxy: EventHandler<'registration'> = (payload) => {
+    handler(payload.state, payload.detail, payload.error ?? null);
+  };
+  registrationBridge.set(handler, proxy);
+  coreService.on('registration', proxy);
 }
 
-/**
- * Removes a messaging event listener.
- */
-export function offMessage(handler: (event: MessageEvent, payload: MessagePayload) => void): void {
-  if (!handler) {
+export function offRegistration(handler: RegistrationListener): void {
+  const proxy = registrationBridge.get(handler);
+  if (!proxy) {
     return;
   }
-  listeners.message.delete(handler);
-  unbindPlatformEvent('message', listeners.message);
+  coreService.off('registration', proxy);
+  registrationBridge.delete(handler);
 }
 
-/**
- * Subscribes to audio route notifications provided by the platform.
- */
-export function onAudioRouteChanged(handler: (route: AudioRouteState) => void): void {
-  if (!handler) {
+export function onCall(handler: CallListener): void {
+  if (!handler || callBridge.has(handler)) {
     return;
   }
-  listeners.audioRoute.add(handler);
-  bindPlatformEvent('audioRoute');
+  const proxy: EventHandler<'call'> = (payload) => {
+    handler(payload.state, payload.detail ?? { number: payload.number, direction: payload.direction }, payload.error ?? null);
+  };
+  callBridge.set(handler, proxy);
+  coreService.on('call', proxy);
 }
 
-/**
- * Removes an audio route listener.
- */
-export function offAudioRouteChanged(handler: (route: AudioRouteState) => void): void {
-  if (!handler) {
+export function offCall(handler: CallListener): void {
+  const proxy = callBridge.get(handler);
+  if (!proxy) {
     return;
   }
-  listeners.audioRoute.delete(handler);
-  unbindPlatformEvent('audioRoute', listeners.audioRoute);
+  coreService.off('call', proxy);
+  callBridge.delete(handler);
 }
+
+export function onMessage(handler: MessageListener): void {
+  if (!handler || messageBridge.has(handler)) {
+    return;
+  }
+  const proxy: EventHandler<'message'> = (payload) => {
+    handler(payload.event, payload.payload, payload.error ?? null);
+  };
+  messageBridge.set(handler, proxy);
+  coreService.on('message', proxy);
+}
+
+export function offMessage(handler: MessageListener): void {
+  const proxy = messageBridge.get(handler);
+  if (!proxy) {
+    return;
+  }
+  coreService.off('message', proxy);
+  messageBridge.delete(handler);
+}
+
+export function onAudioRouteChanged(handler: AudioRouteListener): void {
+  if (!handler || audioRouteBridge.has(handler)) {
+    return;
+  }
+  const proxy: EventHandler<'audioRoute'> = (payload) => {
+    handler(payload.route, payload.reason);
+  };
+  audioRouteBridge.set(handler, proxy);
+  coreService.on('audioRoute', proxy);
+}
+
+export function offAudioRouteChanged(handler: AudioRouteListener): void {
+  const proxy = audioRouteBridge.get(handler);
+  if (!proxy) {
+    return;
+  }
+  coreService.off('audioRoute', proxy);
+  audioRouteBridge.delete(handler);
+}
+
+export function onDeviceChange(handler: DeviceChangeListener): void {
+  if (!handler || deviceBridge.has(handler)) {
+    return;
+  }
+  const proxy: EventHandler<'deviceChange'> = (payload) => {
+    handler(payload);
+  };
+  deviceBridge.set(handler, proxy);
+  coreService.on('deviceChange', proxy);
+}
+
+export function offDeviceChange(handler: DeviceChangeListener): void {
+  const proxy = deviceBridge.get(handler);
+  if (!proxy) {
+    return;
+  }
+  coreService.off('deviceChange', proxy);
+  deviceBridge.delete(handler);
+}
+
+export function onConnectivity(handler: ConnectivityListener): void {
+  if (!handler || connectivityBridge.has(handler)) {
+    return;
+  }
+  const proxy: EventHandler<'connectivity'> = (payload) => {
+    handler(payload);
+  };
+  connectivityBridge.set(handler, proxy);
+  coreService.on('connectivity', proxy);
+}
+
+export function offConnectivity(handler: ConnectivityListener): void {
+  const proxy = connectivityBridge.get(handler);
+  if (!proxy) {
+    return;
+  }
+  coreService.off('connectivity', proxy);
+  connectivityBridge.delete(handler);
+}
+
+export function emit<K extends CoreEventName>(event: K, payload: EventPayloadMap[K]): void {
+  coreService.emit(event, payload);
+}
+
+export { coreService };
+
+export default coreService;
