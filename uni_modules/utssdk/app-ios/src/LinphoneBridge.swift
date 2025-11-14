@@ -1,8 +1,6 @@
 import Foundation
 import AVFoundation
 
-// TODO: Ensure the Linlin frameworks are linked in the consuming Xcode target (see app-ios/Frameworks).
-
 @objc public protocol LinphoneBridgeListener: AnyObject {
     func linphoneBridge(_ bridge: LinphoneBridge, didReceiveEvent type: String, payload: NSDictionary)
     func linphoneBridge(_ bridge: LinphoneBridge, didEncounterError error: NSError)
@@ -12,17 +10,17 @@ import AVFoundation
 public final class LinphoneBridge: NSObject {
     public static let shared = LinphoneBridge()
 
-    private let manager = LinphoneManager.shared
+    private let swiftBridge = LinphoneSwiftBridge.shared
     private let audioRouter = AudioRouter()
     private let callbackQueue = DispatchQueue.main
 
     private var eventCallback: ((String, NSDictionary) -> Void)?
+    private var eventTokens: [String: String] = [:]
 
     public weak var listener: LinphoneBridgeListener?
 
     private override init() {
         super.init()
-        manager.delegate = self
     }
 
     public func initialize(with config: NSDictionary?, listener: LinphoneBridgeListener? = nil) {
@@ -31,7 +29,7 @@ public final class LinphoneBridge: NSObject {
         }
 
         requestMicrophonePermission { [weak self] granted in
-            guard let self = self else { return }
+            guard let self else { return }
 
             guard granted else {
                 self.emitEvent(type: "permission", payload: [
@@ -48,22 +46,41 @@ public final class LinphoneBridge: NSObject {
                 return
             }
 
-            let configuration = config as? [String: Any] ?? [:]
             self.emitEvent(type: "permission", payload: [
                 "resource": "microphone",
                 "status": "granted"
             ])
-            self.manager.initialize(with: configuration)
+
+            let configuration = config as? [String: Any] ?? [:]
+            var bridgeError: NSError?
+            let success = self.swiftBridge.configure(config: configuration, error: &bridgeError)
+
+            guard success else {
+                let nsError = bridgeError ?? NSError(
+                    domain: "LinphoneBridge.Initialize",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Failed to initialize Linphone bridge"]
+                )
+                self.emitError("initialize", error: nsError)
+                return
+            }
+
+            self.installEventForwarding()
+
+            let stateSnapshot = self.swiftBridge.currentState()
+            if let audioRoute = stateSnapshot["audioRoute"] as? String {
+                self.emitEvent(type: "audioRoute", payload: ["route": audioRoute])
+            }
 
             self.emitEvent(type: "registration", payload: [
-                "state": LinphoneManager.RegistrationState.idle.rawValue,
-                "message": "Initialized"
+                "state": "none"
             ])
         }
     }
 
     public func setEventCallback(_ callback: @escaping (String, NSDictionary) -> Void) {
         eventCallback = callback
+        installEventForwarding()
     }
 
     public func clearEventCallback() {
@@ -71,45 +88,82 @@ public final class LinphoneBridge: NSObject {
     }
 
     public func register() {
-        manager.register()
+        swiftBridge.register { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("register", error: error)
+        }
     }
 
     public func unregister() {
-        manager.unregister()
+        swiftBridge.unregister { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("unregister", error: error)
+        }
     }
 
     public func callDial(number: String) {
-        manager.dial(number: number)
+        swiftBridge.callDial(number) { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("callDial", error: error)
+        }
     }
 
     public func callHangup() {
-        manager.hangup()
+        swiftBridge.callHangup { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("callHangup", error: error)
+        }
     }
 
     public func callAnswer() {
-        manager.answer()
+        swiftBridge.callAnswer { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("callAnswer", error: error)
+        }
     }
 
     public func sendDtmf(tone: String) {
-        manager.sendDtmf(tone: tone)
+        swiftBridge.sendDtmf(tone) { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("sendDtmf", error: error)
+        }
     }
 
     public func messageSend(to recipient: String, text: String) {
-        manager.sendMessage(to: recipient, text: text)
+        swiftBridge.messageSend(to: recipient, body: text) { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("messageSend", error: error)
+        }
     }
 
     public func audioSetRoute(route: String) {
-        let selectedRoute = AudioRoute(rawValue: route.lowercased()) ?? .system
+        let normalizedRoute = route.lowercased()
+        let audioRoute = AudioRoute(rawValue: normalizedRoute) ?? .system
 
         do {
-            try audioRouter.setRoute(selectedRoute)
-            manager.updateAudioRoute(selectedRoute)
-            emitEvent(type: "audioRoute", payload: [
-                "route": selectedRoute.rawValue
-            ])
+            try audioRouter.setRoute(audioRoute)
         } catch {
             emitError("audioRoute", error: error)
         }
+
+        swiftBridge.setAudioRoute(normalizedRoute) { [weak self] error in
+            guard let self, let error else { return }
+            self.emitError("audioRoute", error: error)
+        }
+    }
+
+    private func installEventForwarding() {
+        let events = ["registration", "call", "message", "audioRoute"]
+        for event in events where eventTokens[event] == nil {
+            guard let token = swiftBridge.subscribe(event: event, handler: { [weak self] payload in
+                self?.forward(event: event, payload: payload)
+            }) else { continue }
+            eventTokens[event] = token
+        }
+    }
+
+    private func forward(event: String, payload: [String: Any]) {
+        emitEvent(type: event, payload: payload)
     }
 
     private func requestMicrophonePermission(completion: @escaping (Bool) -> Void) {
@@ -122,7 +176,7 @@ public final class LinphoneBridge: NSObject {
             completion(false)
         case .undetermined:
             session.requestRecordPermission { [weak self] granted in
-                guard let self = self else { return }
+                guard let self else { return }
                 self.callbackQueue.async {
                     completion(granted)
                 }
@@ -134,7 +188,7 @@ public final class LinphoneBridge: NSObject {
 
     private func emitEvent(type: String, payload: [String: Any]) {
         callbackQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             let dictionary = payload as NSDictionary
             self.listener?.linphoneBridge(self, didReceiveEvent: type, payload: dictionary)
             self.eventCallback?(type, dictionary)
@@ -144,42 +198,12 @@ public final class LinphoneBridge: NSObject {
     private func emitError(_ type: String, error: Error) {
         let nsError = error as NSError
         callbackQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             self.listener?.linphoneBridge(self, didEncounterError: nsError)
         }
         emitEvent(type: "error", payload: [
             "category": type,
             "message": error.localizedDescription
         ])
-    }
-}
-
-extension LinphoneBridge: LinphoneManagerDelegate {
-    public func linphoneManager(_ manager: LinphoneManager, didUpdateRegistration state: LinphoneManager.RegistrationState, message: String?) {
-        var payload: [String: Any] = ["state": state.rawValue]
-        if let message = message {
-            payload["message"] = message
-        }
-        emitEvent(type: "registration", payload: payload)
-    }
-
-    public func linphoneManager(_ manager: LinphoneManager, didUpdateCall state: LinphoneManager.CallState, info: [String: Any]) {
-        var payload = info
-        payload["state"] = state.rawValue
-        emitEvent(type: "call", payload: payload)
-    }
-
-    public func linphoneManager(_ manager: LinphoneManager, didReceiveMessage payload: [String: Any]) {
-        emitEvent(type: "message", payload: payload)
-    }
-
-    public func linphoneManager(_ manager: LinphoneManager, didChangeAudioRoute route: AudioRoute) {
-        emitEvent(type: "audioRoute", payload: [
-            "route": route.rawValue
-        ])
-    }
-
-    public func linphoneManager(_ manager: LinphoneManager, didFailWith error: Error, category: String) {
-        emitError(category, error: error)
     }
 }
