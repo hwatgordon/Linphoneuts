@@ -1,0 +1,3 @@
+SWIFT_OBJC_BRIDGING_HEADER = $(PROJECT_DIR)/uni_modules/utssdk/app-ios/src/utssdk-Bridging-Header.h
+HEADER_SEARCH_PATHS = $(inherited) $(PROJECT_DIR)/uni_modules/utssdk/app-ios/src $(PROJECT_DIR)/uni_modules/utssdk/app-ios/Frameworks/**
+FRAMEWORK_SEARCH_PATHS = $(inherited) $(PROJECT_DIR)/uni_modules/utssdk/app-ios/Frameworks
