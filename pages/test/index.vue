@@ -5,7 +5,7 @@
         <view class="section__header">
           <text class="section__title">Service Controls</text>
           <text class="section__subtitle">
-            {{ serviceStatusLabel }} · {{ service.initialized ? 'Initialized' : 'Not initialized' }}
+            {{ serviceStatusLabel }} · provider: {{ serviceProviderLabel }} · log: {{ serviceLogLevel }}
           </text>
         </view>
         <view class="button-row">
@@ -13,22 +13,31 @@
             Init
           </button>
           <button
-            type="primary"
             class="button"
-            :loading="loading.start"
-            :disabled="service.running"
-            @click="handleStart"
+            :loading="loading.register"
+            :disabled="!service.initialized"
+            @click="handleRegister"
           >
-            Start Service
+            Register
+          </button>
+          <button class="button" :loading="loading.unregister" @click="handleUnregister">
+            Unregister
           </button>
           <button
             type="warn"
             class="button button--outline"
-            :loading="loading.stop"
-            :disabled="!service.running"
-            @click="handleStop"
+            :loading="loading.dispose"
+            @click="handleDispose"
           >
-            Stop Service
+            Dispose
+          </button>
+        </view>
+        <view class="button-row">
+          <button class="button" :loading="loading.bootstrap" @click="handleBootstrap">
+            Refresh State
+          </button>
+          <button class="button" :loading="loading.logLevel" @click="handleToggleLogLevel">
+            Toggle Log Level
           </button>
         </view>
       </view>
@@ -150,21 +159,25 @@ import { computed, reactive, ref } from 'vue'
 import { useAppState, manualNavigate } from '@/store/appState'
 import {
   initService,
-  startService,
-  stopService,
   registerAccount,
+  unregisterAccount,
   dialNumber,
   disposeService,
   getNativeState,
   simulateIncomingCall,
-  isUsingMock
+  isUsingMock,
+  bootstrapServiceState,
+  setLogLevel
 } from '@/services/utssdk'
 
 const state = useAppState()
 const loading = reactive({
   init: false,
-  start: false,
-  stop: false,
+  dispose: false,
+  register: false,
+  unregister: false,
+  bootstrap: false,
+  logLevel: false,
   iosRegister: false,
   iosCall: false,
   iosState: false,
@@ -206,8 +219,15 @@ const isIOSPlatform = computed(() => {
 
 const iosStateJson = computed(() => (iosState.value ? JSON.stringify(iosState.value, null, 2) : ''))
 
-const serviceStatusLabel = computed(() => (service.value.running ? 'Running' : 'Stopped'))
-const registrationLabel = computed(() => registration.value.status || 'idle')
+const serviceStatusLabel = computed(() => (service.value.initialized ? 'Initialized' : 'Not initialized'))
+const serviceProviderLabel = computed(() => {
+  if (service.value.provider) {
+    return service.value.provider
+  }
+  return isMock.value ? 'mock' : 'native'
+})
+const serviceLogLevel = computed(() => service.value.logLevel || 'info')
+const registrationLabel = computed(() => registration.value.state || 'none')
 const callStateLabel = computed(() => {
   if (call.value.state === 'connected') {
     return `Connected (${call.value.direction || 'n/a'})`
@@ -215,11 +235,14 @@ const callStateLabel = computed(() => {
   if (call.value.state === 'incoming') {
     return 'Incoming call'
   }
-  if (call.value.state === 'dialing') {
-    return 'Dialing'
+  if (call.value.state === 'outgoing') {
+    return 'Outgoing call'
   }
   if (call.value.state === 'ended') {
     return call.value.reason ? `Ended (${call.value.reason})` : 'Ended'
+  }
+  if (call.value.state === 'error') {
+    return call.value.reason ? `Error (${call.value.reason})` : 'Error'
   }
   return call.value.state || 'idle'
 })
@@ -248,16 +271,78 @@ async function runWithLoading(key, action) {
   }
 }
 
+function buildConfigFromRegistration() {
+  const detail = registration.value.detail || {}
+  const candidate = {
+    sipServer: detail.sipServer || detail.domain,
+    username: detail.username,
+    password: detail.password,
+    displayName: detail.displayName,
+    transport: detail.transport
+  }
+  if (candidate.sipServer && candidate.username && candidate.password) {
+    return candidate
+  }
+  const harnessCandidate = {
+    sipServer: iosHarness.sipServer,
+    username: iosHarness.username,
+    password: iosHarness.password,
+    displayName: iosHarness.displayName,
+    transport: iosHarness.transport
+  }
+  if (harnessCandidate.sipServer && harnessCandidate.username && harnessCandidate.password) {
+    return harnessCandidate
+  }
+  return null
+}
+
 function handleInit() {
-  runWithLoading('init', () => initService({ debug: true }))
+  const config = buildConfigFromRegistration()
+  if (!config) {
+    uni.showToast({ title: 'Provide SIP config via Registration page first', icon: 'none' })
+    return
+  }
+  runWithLoading('init', () => initService(config))
 }
 
-function handleStart() {
-  runWithLoading('start', () => startService())
+function handleRegister() {
+  if (!service.value.initialized) {
+    uni.showToast({ title: 'Init the service first', icon: 'none' })
+    return
+  }
+  runWithLoading('register', async () => {
+    await registerAccount()
+    uni.showToast({ title: 'Registration requested', icon: 'none' })
+  })
 }
 
-function handleStop() {
-  runWithLoading('stop', () => stopService())
+function handleUnregister() {
+  runWithLoading('unregister', async () => {
+    await unregisterAccount()
+    uni.showToast({ title: 'Unregister requested', icon: 'none' })
+  })
+}
+
+function handleDispose() {
+  runWithLoading('dispose', async () => {
+    await disposeService()
+    uni.showToast({ title: 'Service disposed', icon: 'none' })
+  })
+}
+
+function handleBootstrap() {
+  runWithLoading('bootstrap', async () => {
+    await bootstrapServiceState({ silent: true })
+    uni.showToast({ title: 'State refreshed', icon: 'none' })
+  })
+}
+
+function handleToggleLogLevel() {
+  const next = serviceLogLevel.value === 'debug' ? 'info' : 'debug'
+  runWithLoading('logLevel', async () => {
+    await setLogLevel(next)
+    uni.showToast({ title: `Log level: ${next}`, icon: 'none' })
+  })
 }
 
 async function simulateIncoming() {
@@ -285,9 +370,14 @@ function runIosRegistration() {
     return
   }
   runWithLoading('iosRegister', async () => {
-    await initService({ debug: true, transport: payload.transport })
-    await startService()
-    await registerAccount(payload)
+    await initService({
+      sipServer: payload.domain,
+      username: payload.username,
+      password: payload.password,
+      displayName: payload.displayName,
+      transport: payload.transport
+    })
+    await registerAccount()
     uni.showToast({ title: 'Registration requested', icon: 'none' })
   })
 }

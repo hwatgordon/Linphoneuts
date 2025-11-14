@@ -28,6 +28,10 @@
             <text class="form__label">Display Name</text>
             <input class="form__input" v-model="form.displayName" placeholder="Optional" />
           </view>
+          <view class="form__field">
+            <text class="form__label">Transport</text>
+            <input class="form__input" v-model="form.transport" placeholder="Optional: udp / tcp / tls" />
+          </view>
         </view>
       </view>
 
@@ -51,15 +55,14 @@
         </view>
         <view class="button-grid">
           <button class="button" :loading="loading.init" @click="handleInit">Init</button>
-          <button class="button" :loading="loading.start" @click="handleStart">Start Service</button>
           <button class="button button--primary" :loading="loading.register" @click="handleRegister">
             Register
           </button>
           <button class="button" :loading="loading.unregister" @click="handleUnregister">
             Unregister
           </button>
-          <button class="button button--danger" :loading="loading.stop" @click="handleStop">
-            Stop Service
+          <button class="button button--danger" :loading="loading.dispose" @click="handleDispose">
+            Dispose
           </button>
         </view>
       </view>
@@ -76,10 +79,9 @@ import { computed, onMounted, onUnmounted, reactive } from 'vue'
 import { useAppState } from '@/store/appState'
 import {
   initService,
-  startService,
   registerAccount,
   unregisterAccount,
-  stopService,
+  disposeService,
   on as onEvent,
   off as offEvent
 } from '@/services/utssdk'
@@ -92,19 +94,19 @@ const form = reactive({
   username: '',
   password: '',
   domain: '',
-  displayName: ''
+  displayName: '',
+  transport: ''
 })
 
 const loading = reactive({
   init: false,
-  start: false,
   register: false,
   unregister: false,
-  stop: false
+  dispose: false
 })
 
 const registrationStatus = computed(() => {
-  const status = registration.value.status || 'idle'
+  const status = registration.value.state || 'none'
   if (registration.value.reason) {
     return `${status} (${registration.value.reason})`
   }
@@ -112,13 +114,13 @@ const registrationStatus = computed(() => {
 })
 
 function subscribeEvents() {
-  onEvent('registration:state', handleRegistrationEvent)
-  onEvent('service:state', handleServiceEvent)
+  onEvent('registration', handleRegistrationEvent)
+  onEvent('service', handleServiceEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('registration:state', handleRegistrationEvent)
-  offEvent('service:state', handleServiceEvent)
+  offEvent('registration', handleRegistrationEvent)
+  offEvent('service', handleServiceEvent)
 }
 
 function handleRegistrationEvent(payload) {
@@ -128,11 +130,14 @@ function handleRegistrationEvent(payload) {
 }
 
 function handleServiceEvent(payload) {
-  if (payload?.running) {
-    uni.showToast({ title: 'Service running', icon: 'none' })
+  if (payload?.initialized) {
+    uni.showToast({ title: 'Service initialized', icon: 'none' })
   }
-  if (payload?.running === false) {
-    uni.showToast({ title: 'Service stopped', icon: 'none' })
+  if (payload?.initialized === false) {
+    uni.showToast({ title: 'Service disposed', icon: 'none' })
+  }
+  if (payload?.logLevel) {
+    uni.showToast({ title: `Log level: ${payload.logLevel}`, icon: 'none' })
   }
 }
 
@@ -156,34 +161,38 @@ async function withLoading(key, fn) {
   }
 }
 
-function handleInit() {
-  withLoading('init', () => initService({ debug: true }))
+function buildConfigFromForm() {
+  const config = {
+    sipServer: form.domain,
+    username: form.username,
+    password: form.password,
+    displayName: form.displayName
+  }
+  if (form.transport) {
+    config.transport = form.transport
+  }
+  return config
 }
 
-function handleStart() {
-  withLoading('start', () => startService())
+function handleInit() {
+  const config = buildConfigFromForm()
+  if (!config.sipServer || !config.username || !config.password) {
+    uni.showToast({ title: 'Domain, username and password required', icon: 'none' })
+    return
+  }
+  withLoading('init', () => initService(config))
 }
 
 function handleRegister() {
-  const payload = {
-    username: form.username,
-    password: form.password,
-    domain: form.domain,
-    displayName: form.displayName
-  }
-  if (!payload.username || !payload.domain) {
-    uni.showToast({ title: 'Username and domain required', icon: 'none' })
-    return
-  }
-  withLoading('register', () => registerAccount(payload))
+  withLoading('register', () => registerAccount())
 }
 
 function handleUnregister() {
   withLoading('unregister', () => unregisterAccount())
 }
 
-function handleStop() {
-  withLoading('stop', () => stopService())
+function handleDispose() {
+  withLoading('dispose', () => disposeService())
 }
 </script>
 

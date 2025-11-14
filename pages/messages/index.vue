@@ -69,22 +69,22 @@ const loading = reactive({
 })
 
 function subscribeEvents() {
-  onEvent('message:received', handleMessageReceived)
-  onEvent('message:error', handleMessageError)
+  onEvent('message', handleMessageEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('message:received', handleMessageReceived)
-  offEvent('message:error', handleMessageError)
+  offEvent('message', handleMessageEvent)
 }
 
-function handleMessageReceived(payload) {
-  uni.showToast({ title: `Message from ${payload?.from || 'unknown'}`, icon: 'none' })
-}
-
-function handleMessageError(payload) {
-  const message = payload?.error || 'Message failed'
-  uni.showToast({ title: message, icon: 'none' })
+function handleMessageEvent(payload) {
+  if (payload?.event === 'received') {
+    const from = payload.payload?.from || 'unknown'
+    uni.showToast({ title: `Message from ${from}`, icon: 'none' })
+  }
+  if (payload?.event === 'failed') {
+    const message = payload?.error?.message || payload?.error?.code || 'Message failed'
+    uni.showToast({ title: message, icon: 'none' })
+  }
 }
 
 onMounted(() => {

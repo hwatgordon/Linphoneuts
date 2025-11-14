@@ -1,9 +1,27 @@
 <script>
+import { onLaunch, onShow } from '@dcloudio/uni-app'
 import { useNavigationController } from '@/composables/useNavigation'
+import { bootstrapServiceState } from '@/services/utssdk'
 
 export default {
   setup() {
     useNavigationController()
+
+    const hydrate = (silent) => {
+      bootstrapServiceState({ silent }).catch(() => {
+        // ignore bootstrap errors; handled via toasts/logs
+      })
+    }
+
+    onLaunch(() => {
+      hydrate(false)
+    })
+
+    onShow(() => {
+      hydrate(true)
+    })
+
+    hydrate(true)
   }
 }
 </script>
