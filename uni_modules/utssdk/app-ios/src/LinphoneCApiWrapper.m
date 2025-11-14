@@ -9,6 +9,7 @@
 #import <LinlinCore/api/c-chat-room.h>
 #import <LinlinCore/api/c-factory.h>
 #import <LinlinCore/api/c-callbacks.h>
+#import <LinlinCore/api/c-audio-device.h>
 #import <LinlinCore/misc.h>
 #import <LinlinBCToolbox/list.h>
 #import <LinlinMediastreamer2/mscommon.h>
@@ -105,6 +106,10 @@ static void LinphoneWrapperMessageReceived(LinphoneCore *core,
                                            LinphoneChatMessage *message);
 static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
                                               LinphoneAudioDevice *device);
+static void LinphoneWrapperAudioDevicesUpdated(LinphoneCore *core);
+static void LinphoneWrapperNetworkReachable(LinphoneCore *core, bool_t reachable);
+static void LinphoneWrapperMessageStateChanged(LinphoneChatMessage *message,
+                                               LinphoneChatMessageState state);
 
 @interface LinphoneCApiWrapper ()
 
@@ -118,6 +123,8 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
 @property (nonatomic, assign) LinphoneAccountCbs *accountCallbacks;
 @property (nonatomic, assign) LinphoneCall *currentCall;
 @property (nonatomic, strong, nullable) dispatch_source_t iterateTimer;
+@property (nonatomic, strong) NSMapTable<NSValue *, NSValue *> *messageCallbackStorage;
+@property (nonatomic, copy) NSString *lastConnectivityStatus;
 
 @end
 
@@ -142,6 +149,9 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
             kCallStateKey: @"none",
             kAudioRouteKey: @"system"
         }];
+        _messageCallbackStorage = [NSMapTable mapTableWithKeyOptions:(NSPointerFunctionsOpaqueMemory | NSPointerFunctionsOpaquePersonality)
+                                                                 valueOptions:(NSPointerFunctionsOpaqueMemory | NSPointerFunctionsOpaquePersonality)];
+        _lastConnectivityStatus = @"unknown";
     }
     return self;
 }
@@ -183,6 +193,10 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     if (success) {
         [self emitRegistrationState:@"none" detail:nil];
         [self emitAudioRoute:@"system"];
+        dispatch_async(self.isolationQueue, ^{
+            [self emitAudioDevicesSnapshotLocked];
+            [self refreshConnectivitySnapshotLocked];
+        });
     }
 
     return success;
@@ -374,12 +388,22 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
             return;
         }
 
+        LinphoneChatMessageCbs *callbacks = linphone_chat_message_cbs_new();
+        if (callbacks) {
+            linphone_chat_message_cbs_set_msg_state_changed(callbacks, LinphoneWrapperMessageStateChanged);
+            linphone_chat_message_add_callbacks(message, callbacks);
+            [self registerMessageTrackingLocked:message withCallbacks:callbacks];
+            linphone_chat_message_cbs_unref(callbacks);
+        }
+
         linphone_chat_message_send(message);
         linphone_chat_message_unref(message);
 
-        NSDictionary *payload = @{ @"to": target,
-                                    @"text": body ?: @"" };
-        [self emitMessageEvent:@"sent" payload:payload];
+        if (!callbacks) {
+            NSDictionary *fallbackPayload = @{ @"to": target,
+                                               @"text": body ?: @"" };
+            [self emitMessageEvent:@"sent" payload:fallbackPayload];
+        }
         [self invokeCompletion:completion error:nil];
     });
 }
@@ -416,6 +440,7 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
             linphone_core_set_default_output_audio_device(self.core, selected);
             self.stateStorage[kAudioRouteKey] = normalized;
             [self emitAudioRoute:normalized];
+            [self emitAudioDevicesSnapshotLocked];
             if (devices) {
                 bctbx_list_free(devices);
             }
@@ -430,6 +455,19 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
         NSError *error = [self errorWithCode:LinphoneWrapperErrorCodeOperationFailed
                                   description:@"Requested audio route is not available."];
         [self invokeCompletion:completion error:error];
+    });
+}
+
+- (void)dispose {
+    dispatch_sync(self.isolationQueue, ^{
+        [self resetMessageTrackingLocked];
+        [self tearDownLocked];
+        self.runtimeConfiguration = nil;
+        [self.stateStorage removeAllObjects];
+        self.stateStorage[kRegistrationStateKey] = @"none";
+        self.stateStorage[kCallStateKey] = @"none";
+        self.stateStorage[kAudioRouteKey] = @"system";
+        self.lastConnectivityStatus = @"unknown";
     });
 }
 
@@ -463,6 +501,8 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     linphone_core_cbs_set_call_state_changed(self.coreCallbacks, LinphoneWrapperCallStateChanged);
     linphone_core_cbs_set_message_received(self.coreCallbacks, LinphoneWrapperMessageReceived);
     linphone_core_cbs_set_audio_device_changed(self.coreCallbacks, LinphoneWrapperAudioDeviceChanged);
+    linphone_core_cbs_set_audio_devices_list_updated(self.coreCallbacks, LinphoneWrapperAudioDevicesUpdated);
+    linphone_core_cbs_set_network_reachable(self.coreCallbacks, LinphoneWrapperNetworkReachable);
 
     linphone_core_add_callbacks(self.core, self.coreCallbacks);
 
@@ -512,6 +552,8 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
 }
 
 - (void)tearDownLocked {
+    [self resetMessageTrackingLocked];
+
     if (self.iterateTimer) {
         dispatch_source_cancel(self.iterateTimer);
         self.iterateTimer = nil;
@@ -545,6 +587,59 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
         linphone_core_unref(self.core);
         self.core = NULL;
     }
+}
+
+#pragma mark - Message tracking
+
+- (void)registerMessageTrackingLocked:(LinphoneChatMessage *)message
+                        withCallbacks:(LinphoneChatMessageCbs *)callbacks {
+    if (!message || !callbacks) {
+        return;
+    }
+
+    linphone_chat_message_ref(message);
+    linphone_chat_message_cbs_ref(callbacks);
+
+    NSValue *key = [NSValue valueWithPointer:message];
+    NSValue *value = [NSValue valueWithPointer:callbacks];
+    [self.messageCallbackStorage setObject:value forKey:key];
+}
+
+- (void)unregisterMessageTrackingLocked:(LinphoneChatMessage *)message {
+    if (!message) {
+        return;
+    }
+
+    NSValue *key = [NSValue valueWithPointer:message];
+    NSValue *stored = [self.messageCallbackStorage objectForKey:key];
+    if (stored) {
+        LinphoneChatMessageCbs *callbacks = (LinphoneChatMessageCbs *)stored.pointerValue;
+        if (callbacks) {
+            linphone_chat_message_remove_callbacks(message, callbacks);
+            linphone_chat_message_cbs_unref(callbacks);
+        }
+        [self.messageCallbackStorage removeObjectForKey:key];
+    }
+
+    linphone_chat_message_unref(message);
+}
+
+- (void)resetMessageTrackingLocked {
+    NSEnumerator<NSValue *> *keyEnumerator = self.messageCallbackStorage.keyEnumerator;
+    NSValue *key = nil;
+    while ((key = keyEnumerator.nextObject)) {
+        LinphoneChatMessage *message = (LinphoneChatMessage *)key.pointerValue;
+        NSValue *stored = [self.messageCallbackStorage objectForKey:key];
+        LinphoneChatMessageCbs *callbacks = (LinphoneChatMessageCbs *)stored.pointerValue;
+        if (message && callbacks) {
+            linphone_chat_message_remove_callbacks(message, callbacks);
+            linphone_chat_message_cbs_unref(callbacks);
+        }
+        if (message) {
+            linphone_chat_message_unref(message);
+        }
+    }
+    [self.messageCallbackStorage removeAllObjects];
 }
 
 - (BOOL)ensureCoreReadyLocked:(NSError * _Nullable __autoreleasing *)error {
@@ -791,6 +886,105 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     }
 }
 
+- (NSDictionary<NSString *, id> *)dictionaryForAudioDevice:(LinphoneAudioDevice *)device
+                                              activeDevice:(LinphoneAudioDevice *)activeDevice
+                                             defaultDevice:(LinphoneAudioDevice *)defaultDevice {
+    if (!device) {
+        return nil;
+    }
+
+    NSString *identifier = UTSStringFromCString(linphone_audio_device_get_id(device)) ?: @"";
+    NSString *label = UTSStringFromCString(linphone_audio_device_get_device_name(device));
+    NSString *type = [self routeStringForAudioDevice:device] ?: @"system";
+
+    NSMutableDictionary<NSString *, id> *descriptor = [NSMutableDictionary dictionary];
+    if (identifier.length > 0) {
+        descriptor[@"id"] = identifier;
+    }
+    descriptor[@"label"] = label.length > 0 ? label : (identifier.length > 0 ? identifier : @"unknown");
+    descriptor[@"type"] = type;
+    descriptor[@"isDefault"] = @((defaultDevice && device == defaultDevice));
+    descriptor[@"isConnected"] = @YES;
+
+    if (linphone_audio_device_get_follows_system_routing_policy(device)) {
+        descriptor[@"followsSystemRouting"] = @YES;
+    }
+
+    LinphoneAudioDeviceCapabilities capabilities = linphone_audio_device_get_capabilities(device);
+    NSMutableArray<NSString *> *capabilityList = [NSMutableArray array];
+    if (capabilities & LinphoneAudioDeviceCapabilityRecord) {
+        [capabilityList addObject:@"record"];
+    }
+    if (capabilities & LinphoneAudioDeviceCapabilityPlay) {
+        [capabilityList addObject:@"play"];
+    }
+    if (capabilityList.count > 0) {
+        descriptor[@"capabilities"] = capabilityList;
+    }
+
+    return [descriptor copy];
+}
+
+- (void)emitAudioDevicesSnapshotLocked {
+    if (!self.core) {
+        [self emitDeviceChange:@[] active:nil];
+        return;
+    }
+
+    bctbx_list_t *devices = linphone_core_get_audio_devices(self.core);
+    LinphoneAudioDevice *activeDevice = linphone_core_get_output_audio_device(self.core);
+    LinphoneAudioDevice *defaultDevice = linphone_core_get_default_output_audio_device(self.core);
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *items = [NSMutableArray array];
+    NSDictionary<NSString *, id> *activeDescriptor = nil;
+
+    for (bctbx_list_t *cursor = devices; cursor != NULL; cursor = cursor->next) {
+        LinphoneAudioDevice *device = (LinphoneAudioDevice *)cursor->data;
+        BOOL isActive = (activeDevice && device == activeDevice);
+        NSDictionary<NSString *, id> *descriptor = [self dictionaryForAudioDevice:device
+                                                                     activeDevice:activeDevice
+                                                                    defaultDevice:defaultDevice];
+        if (!descriptor) {
+            continue;
+        }
+        [items addObject:descriptor];
+        if (!activeDescriptor && isActive) {
+            activeDescriptor = descriptor;
+        }
+    }
+
+    if (devices) {
+        bctbx_list_free(devices);
+    }
+
+    [self emitDeviceChange:items.copy active:activeDescriptor];
+}
+
+#pragma mark - Connectivity
+
+- (void)handleConnectivityChange:(BOOL)reachable {
+    [self emitConnectivityStatusLocked:reachable detail:nil];
+}
+
+- (void)refreshConnectivitySnapshotLocked {
+    BOOL reachable = self.core ? linphone_core_is_network_reachable(self.core) : NO;
+    [self emitConnectivityStatusLocked:reachable detail:nil];
+}
+
+- (void)emitConnectivityStatusLocked:(BOOL)reachable detail:(NSDictionary<NSString *, id> * _Nullable)detail {
+    NSString *status = reachable ? @"online" : @"offline";
+    self.lastConnectivityStatus = status;
+
+    NSMutableDictionary<NSString *, id> *payload = [NSMutableDictionary dictionary];
+    payload[@"status"] = status;
+
+    NSMutableDictionary<NSString *, id> *detailPayload = [NSMutableDictionary dictionaryWithDictionary:detail ?: @{}];
+    detailPayload[@"reachable"] = @(reachable);
+    payload[@"detail"] = detailPayload;
+
+    [self emitConnectivity:payload];
+}
+
 - (void)replaceCurrentCallLocked:(LinphoneCall *)call {
     if (self.currentCall == call) {
         return;
@@ -912,10 +1106,136 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     [self emitMessageEvent:@"received" payload:payload.copy];
 }
 
+- (void)handleMessageStateChanged:(LinphoneChatMessage *)message
+                             state:(LinphoneChatMessageState)state {
+    if (!message) {
+        return;
+    }
+
+    NSString *stateString = UTSStringFromCString(linphone_chat_message_state_to_string(state)) ?: @"";
+    BOOL isSuccessState = (state == LinphoneChatMessageStateDelivered ||
+                           state == LinphoneChatMessageStateDeliveredToUser ||
+                           state == LinphoneChatMessageStateDisplayed ||
+                           state == LinphoneChatMessageStateFileTransferDone);
+    BOOL isFailureState = (state == LinphoneChatMessageStateNotDelivered ||
+                           state == LinphoneChatMessageStateFileTransferError ||
+                           state == LinphoneChatMessageStateFileTransferCancelling);
+
+    if (!isSuccessState && !isFailureState) {
+        return;
+    }
+
+    NSMutableDictionary<NSString *, id> *payload = [[self outboundMessagePayloadForMessage:message] mutableCopy];
+    if (!payload) {
+        payload = [NSMutableDictionary dictionary];
+    }
+    if (stateString.length > 0) {
+        payload[@"state"] = stateString;
+    }
+
+    NSString *eventName = isSuccessState ? @"sent" : @"failed";
+
+    if (isFailureState) {
+        NSDictionary *errorPayload = [self errorPayloadForChatMessage:message];
+        if (errorPayload) {
+            payload[@"error"] = errorPayload;
+        }
+    }
+
+    [self emitMessageEvent:eventName payload:payload.copy];
+    [self unregisterMessageTrackingLocked:message];
+}
+
+- (NSDictionary<NSString *, id> *)outboundMessagePayloadForMessage:(LinphoneChatMessage *)message {
+    if (!message) {
+        return nil;
+    }
+
+    NSMutableDictionary<NSString *, id> *payload = [NSMutableDictionary dictionary];
+    payload[@"direction"] = linphone_chat_message_is_outgoing(message) ? @"outgoing" : @"incoming";
+
+    NSString *text = UTSStringFromCString(linphone_chat_message_get_utf8_text(message));
+    if (text.length > 0) {
+        payload[@"text"] = text;
+    }
+
+    const LinphoneAddress *to = linphone_chat_message_get_to_address(message);
+    NSString *toString = [self stringFromAddress:to];
+    if (toString.length > 0) {
+        payload[@"to"] = toString;
+    }
+
+    const LinphoneAddress *from = linphone_chat_message_get_from_address(message);
+    NSString *fromString = [self stringFromAddress:from];
+    if (fromString.length > 0) {
+        payload[@"from"] = fromString;
+    }
+
+    const char *messageId = linphone_chat_message_get_message_id(message);
+    NSString *messageIdString = UTSStringFromCString(messageId);
+    if (messageIdString.length > 0) {
+        payload[@"messageId"] = messageIdString;
+    }
+
+    return [payload copy];
+}
+
+- (NSDictionary<NSString *, id> *)errorPayloadForChatMessage:(LinphoneChatMessage *)message {
+    if (!message) {
+        return nil;
+    }
+
+    const LinphoneErrorInfo *errorInfo = linphone_chat_message_get_error_info(message);
+    LinphoneReason reason = linphone_chat_message_get_reason(message);
+    NSString *reasonString = ReasonString(reason);
+
+    NSMutableDictionary<NSString *, id> *errorPayload = [NSMutableDictionary dictionary];
+    if (reasonString.length > 0 && ![reasonString isEqualToString:@"none"]) {
+        errorPayload[@"code"] = reasonString;
+    }
+
+    if (errorInfo) {
+        NSString *phrase = UTSStringFromCString(linphone_error_info_get_phrase(errorInfo)) ?: @"";
+        if (phrase.length > 0) {
+            errorPayload[@"message"] = phrase;
+        }
+
+        NSMutableDictionary<NSString *, id> *detail = [NSMutableDictionary dictionary];
+        const char *protocol = linphone_error_info_get_protocol(errorInfo);
+        NSString *protocolString = UTSStringFromCString(protocol);
+        if (protocolString.length > 0) {
+            detail[@"protocol"] = protocolString;
+        }
+
+        int protocolCode = linphone_error_info_get_protocol_code(errorInfo);
+        if (protocolCode > 0) {
+            detail[@"statusCode"] = @(protocolCode);
+        }
+
+        NSString *warnings = UTSStringFromCString(linphone_error_info_get_warnings(errorInfo));
+        if (warnings.length > 0) {
+            detail[@"warnings"] = warnings;
+        }
+
+        if (detail.count > 0) {
+            errorPayload[@"detail"] = detail;
+        }
+    } else if (reasonString.length > 0 && ![reasonString isEqualToString:@"none"]) {
+        errorPayload[@"message"] = reasonString;
+    }
+
+    return errorPayload.count > 0 ? [errorPayload copy] : nil;
+}
+
 - (void)handleAudioDeviceChange:(LinphoneAudioDevice *)device {
-    NSString *route = [self routeStringForAudioDevice:device];
-    self.stateStorage[kAudioRouteKey] = route ?: @"system";
+    NSString *route = [self routeStringForAudioDevice:device] ?: @"system";
+    self.stateStorage[kAudioRouteKey] = route;
     [self emitAudioRoute:route];
+    [self emitAudioDevicesSnapshotLocked];
+}
+
+- (void)handleAudioDevicesListUpdated {
+    [self emitAudioDevicesSnapshotLocked];
 }
 
 #pragma mark - Utility accessors
@@ -984,6 +1304,27 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     }
 }
 
+- (void)emitDeviceChange:(NSArray<NSDictionary<NSString *, id> *> *)devices
+                  active:(NSDictionary<NSString *, id> * _Nullable)active {
+    id<LinphoneCApiWrapperDelegate> delegate = self.delegate;
+    if (!delegate || ![delegate respondsToSelector:@selector(linphoneWrapper:didUpdateAudioDevices:active:)]) {
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [delegate linphoneWrapper:self didUpdateAudioDevices:devices ?: @[] active:active];
+    });
+}
+
+- (void)emitConnectivity:(NSDictionary<NSString *, id> *)payload {
+    id<LinphoneCApiWrapperDelegate> delegate = self.delegate;
+    if (!delegate || ![delegate respondsToSelector:@selector(linphoneWrapper:didUpdateConnectivity:)]) {
+        return;
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [delegate linphoneWrapper:self didUpdateConnectivity:payload ?: @{}];
+    });
+}
+
 - (void)invokeCompletion:(void (^)(NSError * _Nullable))completion error:(NSError * _Nullable)error {
     if (!completion) {
         return;
@@ -1045,6 +1386,44 @@ static void LinphoneWrapperAudioDeviceChanged(LinphoneCore *core,
     }
     dispatch_async(wrapper.isolationQueue, ^{
         [wrapper handleAudioDeviceChange:device];
+    });
+}
+
+static void LinphoneWrapperAudioDevicesUpdated(LinphoneCore *core) {
+    LinphoneCApiWrapper *wrapper = (__bridge LinphoneCApiWrapper *)linphone_core_get_user_data(core);
+    if (!wrapper) {
+        return;
+    }
+    dispatch_async(wrapper.isolationQueue, ^{
+        [wrapper handleAudioDevicesListUpdated];
+    });
+}
+
+static void LinphoneWrapperNetworkReachable(LinphoneCore *core, bool_t reachable) {
+    LinphoneCApiWrapper *wrapper = (__bridge LinphoneCApiWrapper *)linphone_core_get_user_data(core);
+    if (!wrapper) {
+        return;
+    }
+    dispatch_async(wrapper.isolationQueue, ^{
+        [wrapper handleConnectivityChange:(BOOL)reachable];
+    });
+}
+
+static void LinphoneWrapperMessageStateChanged(LinphoneChatMessage *message,
+                                               LinphoneChatMessageState state) {
+    if (!message) {
+        return;
+    }
+    LinphoneCore *core = linphone_chat_message_get_core(message);
+    if (!core) {
+        return;
+    }
+    LinphoneCApiWrapper *wrapper = (__bridge LinphoneCApiWrapper *)linphone_core_get_user_data(core);
+    if (!wrapper) {
+        return;
+    }
+    dispatch_async(wrapper.isolationQueue, ^{
+        [wrapper handleMessageStateChanged:message state:state];
     });
 }
 

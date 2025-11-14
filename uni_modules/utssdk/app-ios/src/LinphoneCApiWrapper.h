@@ -17,6 +17,11 @@ NS_ASSUME_NONNULL_BEGIN
                    payload:(nullable NSDictionary<NSString *, id> *)payload;
 - (void)linphoneWrapper:(LinphoneCApiWrapper *)wrapper
    didUpdateAudioRoute:(NSString *)route;
+- (void)linphoneWrapper:(LinphoneCApiWrapper *)wrapper
+    didUpdateAudioDevices:(NSArray<NSDictionary<NSString *, id> *> *)devices
+                  active:(nullable NSDictionary<NSString *, id> *)activeDevice;
+- (void)linphoneWrapper:(LinphoneCApiWrapper *)wrapper
+    didUpdateConnectivity:(NSDictionary<NSString *, id> *)payload;
 @end
 
 @interface LinphoneCApiWrapper : NSObject
@@ -39,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
                  body:(NSString *)body
             completion:(void (^)(NSError * _Nullable error))completion;
 - (void)setAudioRoute:(NSString *)route completion:(void (^)(NSError * _Nullable error))completion;
+- (void)dispose;
 - (NSDictionary<NSString *, id> *)getState;
 
 @end

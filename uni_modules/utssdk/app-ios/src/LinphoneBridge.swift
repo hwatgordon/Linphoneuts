@@ -13,6 +13,7 @@ public final class LinphoneBridge: NSObject {
     private let swiftBridge = LinphoneSwiftBridge.shared
     private let audioRouter = AudioRouter()
     private let callbackQueue = DispatchQueue.main
+    private let forwardedEvents: [String] = ["registration", "call", "message", "audioRoute", "deviceChange", "connectivity"]
 
     private var eventCallback: ((String, NSDictionary) -> Void)?
     private var eventTokens: [String: String] = [:]
@@ -85,6 +86,9 @@ public final class LinphoneBridge: NSObject {
 
     public func clearEventCallback() {
         eventCallback = nil
+        if listener == nil {
+            uninstallEventForwarding()
+        }
     }
 
     public func register() {
@@ -152,14 +156,40 @@ public final class LinphoneBridge: NSObject {
         }
     }
 
+    public func dispose() {
+        eventCallback = nil
+        listener = nil
+        uninstallEventForwarding()
+        swiftBridge.dispose()
+
+        do {
+            try audioRouter.setRoute(.system)
+        } catch {
+            // ignore failures when resetting to system route during disposal
+        }
+
+        do {
+            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        } catch {
+            // session deactivation is best-effort during teardown
+        }
+    }
+
     private func installEventForwarding() {
-        let events = ["registration", "call", "message", "audioRoute"]
-        for event in events where eventTokens[event] == nil {
+        for event in forwardedEvents where eventTokens[event] == nil {
             guard let token = swiftBridge.subscribe(event: event, handler: { [weak self] payload in
                 self?.forward(event: event, payload: payload)
             }) else { continue }
             eventTokens[event] = token
         }
+    }
+
+    private func uninstallEventForwarding() {
+        guard !eventTokens.isEmpty else { return }
+        for (event, token) in eventTokens {
+            swiftBridge.unsubscribe(event: event, token: token)
+        }
+        eventTokens.removeAll()
     }
 
     private func forward(event: String, payload: [String: Any]) {
