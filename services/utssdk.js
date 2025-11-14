@@ -178,10 +178,101 @@ function emitLocal(event, payload) {
   }
 }
 
+function normalizeCallStateLabel(state) {
+  if (!state) {
+    return 'idle'
+  }
+  const value = typeof state === 'string' ? state.toLowerCase() : state
+  switch (value) {
+    case 'dialing':
+    case 'outgoing':
+      return 'outgoing'
+    case 'ringing':
+    case 'incoming':
+      return 'incoming'
+    case 'connected':
+      return 'connected'
+    case 'ended':
+    case 'complete':
+    case 'completed':
+    case 'disconnected':
+      return 'ended'
+    case 'error':
+    case 'failed':
+    case 'failure':
+      return 'error'
+    case 'idle':
+      return 'idle'
+    default:
+      return typeof state === 'string' ? state : String(state)
+  }
+}
+
+function buildCallStatePatch(payload = {}) {
+  const patch = { ...payload }
+  patch.state = normalizeCallStateLabel(payload.state)
+  if (!patch.direction && (patch.state === 'incoming' || patch.state === 'outgoing')) {
+    patch.direction = patch.state
+  }
+  if (!patch.number && payload.phoneNumber) {
+    patch.number = payload.phoneNumber
+  }
+  const connectedAt =
+    typeof payload.connectedAt === 'number' && !Number.isNaN(payload.connectedAt)
+      ? payload.connectedAt
+      : typeof payload.startedAt === 'number' && !Number.isNaN(payload.startedAt)
+        ? payload.startedAt
+        : undefined
+  if (typeof connectedAt === 'number') {
+    patch.startedAt = connectedAt
+  }
+  if (typeof payload.endedAt === 'number' && !Number.isNaN(payload.endedAt)) {
+    const startedAt = typeof patch.startedAt === 'number' ? patch.startedAt : undefined
+    if (typeof startedAt === 'number') {
+      patch.duration = Math.max(0, payload.endedAt - startedAt)
+    }
+    patch.endedAt = payload.endedAt
+  }
+  if (!patch.timestamp) {
+    patch.timestamp = payload.timestamp || Date.now()
+  }
+  return patch
+}
+
+function buildCallEventPayload(originalPayload = {}, patch = null) {
+  const reference = patch ? { ...patch } : buildCallStatePatch(originalPayload)
+  return {
+    state: reference.state,
+    direction: reference.direction,
+    number: reference.number,
+    reason: reference.reason,
+    error: reference.error ?? null,
+    detail: reference.detail ?? null,
+    timestamp: reference.timestamp || Date.now(),
+    connectedAt: typeof reference.startedAt === 'number' ? reference.startedAt : null,
+    endedAt: typeof reference.endedAt === 'number' ? reference.endedAt : null,
+    duration: typeof reference.duration === 'number' ? reference.duration : null,
+    raw: originalPayload
+  }
+}
+
+function buildAudioRouteEventPayload(payload = {}) {
+  const routeSource = payload.route ?? payload.audioRoute ?? payload.type ?? ''
+  const route = routeSource || 'system'
+  return {
+    route,
+    reason: payload.reason || '',
+    timestamp: payload.timestamp || Date.now(),
+    raw: payload
+  }
+}
+
 function handleNativeEvent(event, payload = {}) {
   if (!event) {
     return
   }
+
+  let normalizedPayload = payload
 
   switch (event) {
     case 'service:state':
@@ -193,22 +284,39 @@ function handleNativeEvent(event, payload = {}) {
       updateRegistrationState(payload)
       break
     case 'call:state':
-    case 'call-state':
-      updateCallState(payload)
+    case 'call-state': {
+      const patch = buildCallStatePatch(payload)
+      normalizedPayload = { ...payload, ...patch }
+      updateCallState(patch)
+      emitLocal('call', buildCallEventPayload(payload, patch))
       break
-    case 'call:audio-route':
-      if (payload.route) {
-        setAudioRoute(payload.route)
+    }
+    case 'call:audio-route': {
+      const audioEvent = buildAudioRouteEventPayload(payload)
+      if (payload.route || payload.audioRoute || payload.type) {
+        setAudioRoute(audioEvent.route)
       }
+      normalizedPayload = { ...payload, route: audioEvent.route, timestamp: audioEvent.timestamp }
+      emitLocal('audioRoute', audioEvent)
       break
+    }
     case 'device:audio':
     case 'audio:device':
     case 'audio:devices':
     case 'device:list':
     case 'device:update':
-    case 'device':
+    case 'device': {
       updateAudioDevices(payload)
+      const timestamp = payload.timestamp || Date.now()
+      normalizedPayload = { ...payload, timestamp }
+      emitLocal('deviceChange', {
+        devices: payload.devices || [],
+        active: payload.active || payload.activeRoute || null,
+        timestamp,
+        raw: payload
+      })
       break
+    }
     case 'message:received':
       recordMessageReceived(payload)
       break
@@ -227,18 +335,18 @@ function handleNativeEvent(event, payload = {}) {
       break
   }
 
-  if (payload?.suggestedRoute) {
-    requestNavigation(payload.suggestedRoute, { auto: true })
+  if (normalizedPayload?.suggestedRoute) {
+    requestNavigation(normalizedPayload.suggestedRoute, { auto: true })
   }
 
   logEvent({
     level: 'info',
     message: `Event ${event}`,
-    data: payload,
+    data: normalizedPayload,
     context: 'utssdk'
   })
 
-  emitLocal(event, payload)
+  emitLocal(event, normalizedPayload)
 }
 
 async function callClientMethod(method, payload) {
@@ -347,7 +455,7 @@ export async function dialNumber(payload) {
   const result = await callClientMethod('dial', data)
   if (result !== false) {
     handleNativeEvent('call:state', {
-      state: 'dialing',
+      state: 'outgoing',
       direction: 'outgoing',
       number: data.number,
       suggestedRoute: '/pages/call/index'
@@ -514,10 +622,10 @@ function createMockClient() {
       currentCall = {
         number,
         direction: 'outgoing',
-        state: 'dialing'
+        state: 'outgoing'
       }
       emit('call:state', {
-        state: 'dialing',
+        state: 'outgoing',
         direction: 'outgoing',
         number,
         suggestedRoute: '/pages/call/index'
@@ -612,3 +720,35 @@ function createMockClient() {
     }
   }
 }
+
+const serviceEvents = {
+  on: (event, handler) => on(event, handler),
+  once: (event, handler) => once(event, handler),
+  off: (event, handler) => off(event, handler),
+  emit: (event, payload) => emitLocal(event, payload)
+}
+
+export const service = {
+  call: {
+    dial: (target) => dialNumber(target),
+    hangup: (data) => hangupCall(data),
+    answer: (data) => answerCall(data),
+    sendDtmf: (tone) => sendDtmf(tone)
+  },
+  audio: {
+    setRoute: (route) => setAudioOutput(route)
+  },
+  events: serviceEvents,
+  core: {
+    init: initService,
+    start: startService,
+    stop: stopService,
+    dispose: disposeService,
+    register: registerAccount,
+    unregister: unregisterAccount,
+    getState: getNativeState
+  },
+  isUsingMock
+}
+
+export default service
