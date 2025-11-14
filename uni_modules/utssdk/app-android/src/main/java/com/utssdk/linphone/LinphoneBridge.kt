@@ -54,13 +54,6 @@ object LinphoneBridge : LinphoneManager.Callback {
                 "status" to "granted"
             )
         )
-        emitEvent(
-            type = "registration",
-            payload = mapOf(
-                "state" to LinphoneManager.RegistrationState.IDLE.wireName,
-                "message" to "Initialized"
-            )
-        )
     }
 
     @JvmStatic
@@ -131,6 +124,14 @@ object LinphoneBridge : LinphoneManager.Callback {
         }
     }
 
+    @JvmStatic
+    fun dispose() {
+        manager.dispose()
+        eventCallback = null
+        listener = null
+        applicationContext = null
+    }
+
     private fun ensureMicrophonePermission(): Boolean {
         val context = applicationContext ?: return false
         val granted = ContextCompat.checkSelfPermission(
@@ -185,6 +186,18 @@ object LinphoneBridge : LinphoneManager.Callback {
 
     override fun onAudioRoute(route: AudioRouter.Route) {
         emitEvent("audioRoute", mapOf("route" to route.wireName))
+    }
+
+    override fun onDeviceChange(devices: List<Map<String, Any?>>, active: Map<String, Any?>?) {
+        val payload = mutableMapOf<String, Any?>("devices" to devices)
+        if (active != null) {
+            payload["active"] = active
+        }
+        emitEvent("deviceChange", payload)
+    }
+
+    override fun onConnectivity(status: Map<String, Any?>) {
+        emitEvent("connectivity", status)
     }
 
     override fun onError(category: String, throwable: Throwable) {

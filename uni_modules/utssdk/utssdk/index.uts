@@ -12,6 +12,7 @@ type NativeBridge = {
     sendDtmf?: (tone: string) => void,
     messageSend?: (recipient: string, text: string) => void,
     audioSetRoute?: (route: string) => void,
+    dispose?: () => void,
     setEventCallback?: (callback: (type: string, payload: JsonRecord) => void) => void,
     clearEventCallback?: () => void,
     setEventListener?: (listener: {
@@ -212,6 +213,29 @@ export function setAudioRoute(route: AudioRoute): void {
     }
     ensureEventPump()
     bridge.audioSetRoute(route)
+}
+
+export function dispose(): void {
+    const bridge = getBridge()
+    if (!bridge) {
+        notifyMissingBridge('dispose')
+        return
+    }
+
+    if (typeof bridge.clearEventCallback === 'function') {
+        bridge.clearEventCallback()
+    }
+
+    if (typeof bridge.dispose === 'function') {
+        bridge.dispose()
+    } else {
+        notifyMissingBridge('dispose')
+    }
+
+    listeners.clear()
+    bridgeInstance = null
+    activePluginName = null
+    eventPumpInstalled = false
 }
 
 export function addEventListener(eventName: string, handler: EventHandler): void {
