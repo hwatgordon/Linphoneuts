@@ -86,42 +86,127 @@ export function updateRegistrationState(patch = {}) {
   }
 }
 
+function normalizeCallState(stateValue) {
+  if (!stateValue) {
+    return ''
+  }
+  const value = typeof stateValue === 'string' ? stateValue.toLowerCase() : stateValue
+  switch (value) {
+    case 'dialing':
+    case 'outgoing':
+      return 'outgoing'
+    case 'ringing':
+    case 'incoming':
+      return 'incoming'
+    case 'connected':
+      return 'connected'
+    case 'ended':
+    case 'complete':
+    case 'completed':
+    case 'disconnected':
+      return 'ended'
+    case 'error':
+    case 'failed':
+    case 'failure':
+      return 'error'
+    case 'idle':
+      return 'idle'
+    default:
+      return typeof stateValue === 'string' ? stateValue : ''
+  }
+}
+
 export function updateCallState(patch = {}) {
-  const nextState = patch.state ?? state.call.state
+  const normalizedState = normalizeCallState(patch.state)
+  const nextState = normalizedState || state.call.state
   const merged = { ...patch }
 
-  if (nextState === 'connected' && !state.call.startedAt) {
-    merged.startedAt = Date.now()
+  if (normalizedState) {
+    merged.state = normalizedState
+  }
+
+  if (!merged.direction && (nextState === 'incoming' || nextState === 'outgoing')) {
+    merged.direction = nextState
+  }
+
+  if (!merged.number && patch.number == null && state.call.number && nextState !== 'idle') {
+    merged.number = state.call.number
+  }
+
+  if (!('reason' in merged) && ['incoming', 'outgoing', 'connected'].includes(nextState)) {
+    merged.reason = ''
+  }
+
+  const connectedAt =
+    typeof patch.connectedAt === 'number' && !Number.isNaN(patch.connectedAt)
+      ? patch.connectedAt
+      : undefined
+
+  if (typeof merged.startedAt !== 'number' || Number.isNaN(merged.startedAt)) {
+    if (typeof connectedAt === 'number') {
+      merged.startedAt = connectedAt
+    } else if (nextState === 'connected' && !state.call.startedAt) {
+      merged.startedAt = Date.now()
+    } else if (nextState === 'outgoing' || nextState === 'incoming') {
+      merged.startedAt = 0
+    }
+  }
+
+  if (['incoming', 'outgoing'].includes(nextState)) {
+    merged.duration = 0
+  }
+
+  if (nextState === 'connected') {
+    merged.duration = typeof merged.duration === 'number' ? merged.duration : 0
   }
 
   if (nextState === 'ended') {
-    merged.duration = state.call.startedAt ? Date.now() - state.call.startedAt : state.call.duration
+    const startedAt =
+      typeof merged.startedAt === 'number' && merged.startedAt > 0
+        ? merged.startedAt
+        : state.call.startedAt
+    const endedAt =
+      typeof patch.endedAt === 'number' && !Number.isNaN(patch.endedAt)
+        ? patch.endedAt
+        : patch.timestamp || Date.now()
+    if (typeof merged.duration !== 'number' || Number.isNaN(merged.duration)) {
+      merged.duration = startedAt ? Math.max(0, endedAt - startedAt) : state.call.duration
+    }
     if (!('reason' in merged) && patch.reason == null) {
       merged.reason = state.call.reason
     }
+    merged.startedAt = 0
   }
 
   if (nextState === 'idle') {
     merged.startedAt = 0
     merged.duration = 0
+    merged.direction = ''
+    merged.number = ''
+    merged.reason = ''
   }
 
   Object.assign(state.call, merged)
 
-  if (patch.suggestedRoute) {
-    requestNavigation(patch.suggestedRoute, { auto: true })
+  if (merged.suggestedRoute) {
+    requestNavigation(merged.suggestedRoute, { auto: true })
   }
 }
 
 export function setAudioRoute(route) {
-  const nextRoute = route || 'system'
+  const nextRoute = (route || 'system').toLowerCase()
   state.call.audioRoute = nextRoute
   if (Array.isArray(state.call.devices)) {
     state.call.devices.forEach((device) => {
-      device.selected = device.type === nextRoute || device.id === nextRoute
+      const deviceRoute = (device.type || device.id || '').toLowerCase()
+      device.selected = deviceRoute === nextRoute
     })
   }
-  if (nextRoute && Array.isArray(state.call.availableRoutes) && !state.call.availableRoutes.includes(nextRoute)) {
+  if (
+    nextRoute &&
+    Array.isArray(state.call.availableRoutes) &&
+    !state.call.availableRoutes.includes(nextRoute)
+  ) {
     state.call.availableRoutes.push(nextRoute)
   }
 }
@@ -131,7 +216,8 @@ export function updateAudioDevices(payload = {}) {
   const normalized = devicesInput.map((device) => {
     const id = device?.id || device?.name || `device-${Math.random().toString(36).slice(2, 10)}`
     const name = device?.name || device?.label || id
-    const type = device?.type || device?.route || device?.category || 'unknown'
+    const rawType = device?.type || device?.route || device?.category || 'unknown'
+    const type = typeof rawType === 'string' ? rawType.toLowerCase() : rawType
     return {
       id,
       name,

@@ -38,7 +38,7 @@
         <view class="button-row">
           <button
             class="button button--primary"
-            :disabled="!callee"
+            :disabled="!canDial"
             :loading="loading.dial"
             @click="handleDial"
           >
@@ -66,15 +66,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { useAppState } from '@/store/appState'
-import {
-  dialNumber,
-  hangupCall,
-  sendDtmf,
-  on as onEvent,
-  off as offEvent
-} from '@/services/utssdk'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { ROUTES, requestNavigation, useAppState } from '@/store/appState'
+import service from '@/services/utssdk'
 
 const state = useAppState()
 const call = computed(() => state.call)
@@ -96,18 +90,46 @@ const loading = reactive({
   dtmf: false
 })
 
+const audioRouteLabels = {
+  system: 'System',
+  speaker: 'Speaker',
+  earpiece: 'Earpiece',
+  bluetooth: 'Bluetooth',
+  unknown: 'System'
+}
+
 const callStateLabel = computed(() => {
-  if (call.value.state === 'connected') {
-    return `Connected (${call.value.direction || 'unknown'})`
+  switch (call.value.state) {
+    case 'outgoing':
+      return 'Dialing...'
+    case 'connected':
+      return `Connected (${call.value.direction || 'unknown'})`
+    case 'incoming':
+      return 'Incoming'
+    case 'ended':
+      return call.value.reason ? `Ended (${call.value.reason})` : 'Ended'
+    case 'error':
+      return call.value.reason ? `Error (${call.value.reason})` : 'Call error'
+    default:
+      return call.value.state || 'idle'
   }
-  if (call.value.state === 'dialing') return 'Dialing'
-  if (call.value.state === 'incoming') return 'Incoming'
-  if (call.value.state === 'ended') return call.value.reason ? `Ended (${call.value.reason})` : 'Ended'
-  return call.value.state || 'idle'
 })
 
-const canHangup = computed(() => ['dialing', 'connected', 'incoming'].includes(call.value.state))
-const canSendDtmf = computed(() => call.value.state === 'connected' && !!lastTone.value)
+const canDial = computed(() => {
+  if (loading.dial) return false
+  if (!callee.value.trim()) return false
+  return !['incoming', 'outgoing', 'connected'].includes(call.value.state)
+})
+
+const canHangup = computed(() => {
+  if (loading.hangup) return false
+  return ['incoming', 'outgoing', 'connected'].includes(call.value.state)
+})
+
+const canSendDtmf = computed(() => {
+  if (loading.dtmf) return false
+  return call.value.state === 'connected' && !!lastTone.value
+})
 
 function appendDigit(digit) {
   callee.value += digit
@@ -123,30 +145,64 @@ function clearInput() {
   lastTone.value = ''
 }
 
+function formatRouteLabel(route) {
+  const key = typeof route === 'string' ? route.toLowerCase() : ''
+  return audioRouteLabels[key] || (typeof route === 'string' ? route : 'System')
+}
+
+function handleCallEvent(event) {
+  if (!event) return
+  const { state: eventState } = event
+  if (eventState === 'incoming') {
+    uni.showToast({ title: 'Incoming call', icon: 'none' })
+    return
+  }
+  if (eventState === 'connected') {
+    uni.showToast({ title: 'Call connected', icon: 'none' })
+    return
+  }
+  if (eventState === 'ended') {
+    const title = event.reason ? `Call ended (${event.reason})` : 'Call ended'
+    uni.showToast({ title, icon: 'none' })
+    return
+  }
+  if (eventState === 'error') {
+    const message = event.error?.message || event.reason || 'Call failed'
+    uni.showToast({ title: message, icon: 'none' })
+  }
+}
+
+function handleAudioRouteEvent(event) {
+  if (!event?.route) return
+  const label = formatRouteLabel(event.route)
+  uni.showToast({ title: `Audio route: ${label}`, icon: 'none' })
+}
+
 function subscribeEvents() {
-  onEvent('call:state', handleCallEvent)
+  service.events.on('call', handleCallEvent)
+  service.events.on('audioRoute', handleAudioRouteEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('call:state', handleCallEvent)
+  service.events.off('call', handleCallEvent)
+  service.events.off('audioRoute', handleAudioRouteEvent)
 }
 
-function handleCallEvent(payload) {
-  if (payload?.state === 'connected') {
-    uni.showToast({ title: 'Call connected', icon: 'none' })
-  }
-  if (payload?.state === 'ended') {
-    uni.showToast({ title: 'Call ended', icon: 'none' })
-  }
-}
+onMounted(subscribeEvents)
+onUnmounted(unsubscribeEvents)
 
-onMounted(() => {
-  subscribeEvents()
-})
-
-onUnmounted(() => {
-  unsubscribeEvents()
-})
+watch(
+  () => call.value.state,
+  (stateValue) => {
+    if (['incoming', 'outgoing', 'connected'].includes(stateValue)) {
+      requestNavigation(ROUTES.call, { auto: true })
+    }
+    if (['ended', 'idle', 'error'].includes(stateValue)) {
+      lastTone.value = ''
+    }
+  },
+  { immediate: true }
+)
 
 async function withLoading(key, fn) {
   if (loading[key]) return
@@ -154,26 +210,34 @@ async function withLoading(key, fn) {
   try {
     await fn()
   } catch (error) {
-    uni.showToast({ title: error?.message || 'Operation failed', icon: 'none' })
+    const message = error?.message || 'Operation failed'
+    uni.showToast({ title: message, icon: 'none' })
   } finally {
     loading[key] = false
   }
 }
 
 function handleDial() {
-  const payload = { number: callee.value }
-  withLoading('dial', () => dialNumber(payload))
+  if (!canDial.value) {
+    if (!callee.value.trim()) {
+      uni.showToast({ title: 'Enter a number first', icon: 'none' })
+    }
+    return
+  }
+  const number = callee.value.trim()
+  withLoading('dial', () => service.call.dial(number))
 }
 
 function handleHangup() {
-  withLoading('hangup', () => hangupCall())
+  if (!canHangup.value) return
+  withLoading('hangup', () => service.call.hangup())
 }
 
 function handleSendDtmf() {
   const tone = lastTone.value
-  if (!tone) return
+  if (!tone || !canSendDtmf.value) return
   withLoading('dtmf', async () => {
-    await sendDtmf({ tone })
+    await service.call.sendDtmf(tone)
     uni.showToast({ title: `DTMF ${tone} sent`, icon: 'none' })
   })
 }

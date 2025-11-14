@@ -215,11 +215,14 @@ const callStateLabel = computed(() => {
   if (call.value.state === 'incoming') {
     return 'Incoming call'
   }
-  if (call.value.state === 'dialing') {
+  if (call.value.state === 'outgoing') {
     return 'Dialing'
   }
   if (call.value.state === 'ended') {
     return call.value.reason ? `Ended (${call.value.reason})` : 'Ended'
+  }
+  if (call.value.state === 'error') {
+    return call.value.reason ? `Error (${call.value.reason})` : 'Call error'
   }
   return call.value.state || 'idle'
 })

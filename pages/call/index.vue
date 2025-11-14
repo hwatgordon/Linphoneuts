@@ -19,11 +19,21 @@
           <text class="section__title">Incoming Call</text>
         </view>
         <view class="button-row">
-          <button class="button button--primary" :loading="loading.answer" @click="handleAnswer">
+          <button
+            class="button button--primary"
+            :disabled="!canAnswer"
+            :loading="loading.answer"
+            @click="handleAnswer"
+          >
             Answer
           </button>
-          <button class="button button--danger" :loading="loading.decline" @click="handleDecline">
-            Decline
+          <button
+            class="button button--danger"
+            :disabled="!canHangup"
+            :loading="loading.hangup"
+            @click="handleHangup"
+          >
+            Hangup
           </button>
         </view>
       </view>
@@ -49,7 +59,8 @@
             v-for="route in audioRoutes"
             :key="route.value"
             class="audio-route"
-            :class="{ 'audio-route--active': call.audioRoute === route.value }"
+            :class="{ 'audio-route--active': route.selected }"
+            :disabled="route.selected || audioRouteLoading === route.value"
             @click="selectAudioRoute(route.value)"
           >
             {{ route.label }}
@@ -66,15 +77,8 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useAppState } from '@/store/appState'
-import {
-  answerCall,
-  declineCall,
-  hangupCall,
-  setAudioOutput,
-  on as onEvent,
-  off as offEvent
-} from '@/services/utssdk'
+import { ROUTES, requestNavigation, useAppState } from '@/store/appState'
+import service from '@/services/utssdk'
 
 const state = useAppState()
 const call = computed(() => state.call)
@@ -82,10 +86,10 @@ const events = computed(() => state.events)
 
 const loading = reactive({
   answer: false,
-  decline: false,
   hangup: false
 })
 
+const audioRouteLoading = ref('')
 const elapsedMs = ref(0)
 let timer = null
 
@@ -97,35 +101,92 @@ const audioRouteLabels = {
   unknown: 'Unknown'
 }
 
-const audioRoutes = computed(() => {
-  if (Array.isArray(call.value.devices) && call.value.devices.length > 0) {
-    return call.value.devices.map((device) => ({
-      value: device.type || device.id,
-      label: device.name || audioRouteLabels[device.type] || device.type || device.id
-    }))
+const DEFAULT_ROUTES = ['system', 'earpiece', 'speaker', 'bluetooth']
+
+function normalizeRoute(route) {
+  return typeof route === 'string' ? route.toLowerCase() : ''
+}
+
+function formatAudioRouteLabel(route, device) {
+  const key = normalizeRoute(route)
+  const fallback =
+    typeof route === 'string' && route.length > 0
+      ? route.charAt(0).toUpperCase() + route.slice(1)
+      : audioRouteLabels.system
+  const base = audioRouteLabels[key] || fallback
+  if (device?.name && key !== 'system') {
+    return `${base} (${device.name})`
   }
-  const fallback = call.value.availableRoutes && call.value.availableRoutes.length > 0
-    ? call.value.availableRoutes
-    : ['system', 'earpiece', 'speaker', 'bluetooth']
-  return fallback.map((route) => ({
-    value: route,
-    label: audioRouteLabels[route] || route
-  }))
+  return base
+}
+
+const audioRoutes = computed(() => {
+  const devices = Array.isArray(call.value.devices) ? call.value.devices : []
+  const currentRoute = normalizeRoute(call.value.audioRoute || 'system')
+  const entries = []
+  const seen = new Set()
+
+  devices.forEach((device) => {
+    const route = device?.type || device?.route || device?.id
+    const normalized = normalizeRoute(route)
+    if (!normalized || seen.has(normalized)) {
+      return
+    }
+    seen.add(normalized)
+    entries.push({
+      value: normalized,
+      label: formatAudioRouteLabel(normalized, device),
+      selected: normalized === currentRoute
+    })
+  })
+
+  const fallback =
+    call.value.availableRoutes && call.value.availableRoutes.length > 0
+      ? call.value.availableRoutes
+      : DEFAULT_ROUTES
+
+  fallback.forEach((route) => {
+    const normalized = normalizeRoute(route)
+    if (!normalized || seen.has(normalized)) {
+      return
+    }
+    seen.add(normalized)
+    entries.push({
+      value: normalized,
+      label: formatAudioRouteLabel(normalized),
+      selected: normalized === currentRoute
+    })
+  })
+
+  if (!entries.length) {
+    entries.push({
+      value: 'system',
+      label: audioRouteLabels.system,
+      selected: currentRoute === 'system'
+    })
+  }
+
+  return entries
 })
 
 const isIncoming = computed(() => call.value.state === 'incoming')
-const canHangup = computed(() => ['connected', 'dialing', 'incoming'].includes(call.value.state))
+const canAnswer = computed(() => isIncoming.value && !loading.answer)
+const canHangup = computed(
+  () => ['incoming', 'outgoing', 'connected'].includes(call.value.state) && !loading.hangup
+)
 
 const stateLabel = computed(() => {
   switch (call.value.state) {
     case 'incoming':
       return 'Incoming call'
-    case 'dialing':
+    case 'outgoing':
       return 'Dialing...'
     case 'connected':
       return 'Connected'
     case 'ended':
       return call.value.reason ? `Ended (${call.value.reason})` : 'Call ended'
+    case 'error':
+      return call.value.reason ? `Error (${call.value.reason})` : 'Call error'
     default:
       return call.value.state || 'Idle'
   }
@@ -143,19 +204,32 @@ const timerDisplay = computed(() => {
 
 watch(
   () => call.value.state,
-  (state) => {
-    if (state === 'connected') {
+  (stateValue) => {
+    if (stateValue === 'connected') {
       startTimer()
     } else {
       stopTimer()
-      if (state === 'ended' && call.value.duration) {
+      if (stateValue === 'ended' && call.value.duration) {
         elapsedMs.value = call.value.duration
       } else {
         elapsedMs.value = 0
       }
     }
+
+    if (['ended', 'idle', 'error'].includes(stateValue)) {
+      requestNavigation(ROUTES.dialer, { auto: true })
+    }
   },
   { immediate: true }
+)
+
+watch(
+  () => call.value.startedAt,
+  (startedAt) => {
+    if (call.value.state === 'connected' && typeof startedAt === 'number' && startedAt > 0) {
+      elapsedMs.value = Math.max(0, Date.now() - startedAt)
+    }
+  }
 )
 
 function startTimer() {
@@ -172,8 +246,9 @@ function stopTimer() {
 }
 
 function updateElapsed() {
-  if (call.value.startedAt) {
-    elapsedMs.value = Date.now() - call.value.startedAt
+  const startedAt = call.value.startedAt
+  if (typeof startedAt === 'number' && startedAt > 0) {
+    elapsedMs.value = Math.max(0, Date.now() - startedAt)
   }
 }
 
@@ -185,37 +260,49 @@ function formatDuration(ms) {
 }
 
 function subscribeEvents() {
-  onEvent('call:state', handleCallEvent)
-  onEvent('call:audio-route', handleAudioRouteEvent)
+  service.events.on('call', handleCallEvent)
+  service.events.on('audioRoute', handleAudioRouteEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('call:state', handleCallEvent)
-  offEvent('call:audio-route', handleAudioRouteEvent)
+  service.events.off('call', handleCallEvent)
+  service.events.off('audioRoute', handleAudioRouteEvent)
 }
 
-function handleCallEvent(payload) {
-  if (payload?.state === 'incoming') {
-    uni.showToast({ title: 'Incoming call', icon: 'none' })
-  }
-  if (payload?.state === 'connected') {
-    uni.showToast({ title: 'Call connected', icon: 'none' })
-  }
-  if (payload?.state === 'ended') {
-    uni.showToast({ title: 'Call ended', icon: 'none' })
+function handleCallEvent(event) {
+  if (!event) return
+  switch (event.state) {
+    case 'incoming':
+      uni.showToast({ title: 'Incoming call', icon: 'none' })
+      break
+    case 'outgoing':
+      uni.showToast({ title: 'Dialing...', icon: 'none' })
+      break
+    case 'connected':
+      uni.showToast({ title: 'Call connected', icon: 'none' })
+      break
+    case 'ended': {
+      const title = event.reason ? `Call ended (${event.reason})` : 'Call ended'
+      uni.showToast({ title, icon: 'none' })
+      break
+    }
+    case 'error': {
+      const message = event.error?.message || event.reason || 'Call failed'
+      uni.showToast({ title: message, icon: 'none' })
+      break
+    }
+    default:
+      break
   }
 }
 
-function handleAudioRouteEvent(payload) {
-  if (payload?.route) {
-    uni.showToast({ title: `Audio route: ${payload.route}`, icon: 'none' })
-  }
+function handleAudioRouteEvent(event) {
+  if (!event?.route) return
+  const label = formatAudioRouteLabel(event.route)
+  uni.showToast({ title: `Audio route: ${label}`, icon: 'none' })
 }
 
-onMounted(() => {
-  subscribeEvents()
-})
-
+onMounted(subscribeEvents)
 onUnmounted(() => {
   unsubscribeEvents()
   stopTimer()
@@ -227,29 +314,36 @@ async function withLoading(key, fn) {
   try {
     await fn()
   } catch (error) {
-    uni.showToast({ title: error?.message || 'Operation failed', icon: 'none' })
+    const message = error?.message || 'Operation failed'
+    uni.showToast({ title: message, icon: 'none' })
   } finally {
     loading[key] = false
   }
 }
 
 function handleAnswer() {
-  withLoading('answer', () => answerCall())
-}
-
-function handleDecline() {
-  withLoading('decline', () => declineCall())
+  if (!canAnswer.value) return
+  withLoading('answer', () => service.call.answer())
 }
 
 function handleHangup() {
-  withLoading('hangup', () => hangupCall())
+  if (!canHangup.value) return
+  withLoading('hangup', () => service.call.hangup())
 }
 
 async function selectAudioRoute(route) {
+  const value = typeof route === 'string' ? route : ''
+  if (!value || audioRouteLoading.value === value) {
+    return
+  }
+  audioRouteLoading.value = value
   try {
-    await setAudioOutput(route)
+    await service.audio.setRoute(value)
   } catch (error) {
-    uni.showToast({ title: error?.message || 'Audio route failed', icon: 'none' })
+    const message = error?.message || 'Audio route failed'
+    uni.showToast({ title: message, icon: 'none' })
+  } finally {
+    audioRouteLoading.value = ''
   }
 }
 </script>
