@@ -100,13 +100,14 @@ const callStateLabel = computed(() => {
   if (call.value.state === 'connected') {
     return `Connected (${call.value.direction || 'unknown'})`
   }
-  if (call.value.state === 'dialing') return 'Dialing'
+  if (call.value.state === 'outgoing') return 'Dialing'
   if (call.value.state === 'incoming') return 'Incoming'
   if (call.value.state === 'ended') return call.value.reason ? `Ended (${call.value.reason})` : 'Ended'
+  if (call.value.state === 'error') return call.value.reason ? `Error (${call.value.reason})` : 'Error'
   return call.value.state || 'idle'
 })
 
-const canHangup = computed(() => ['dialing', 'connected', 'incoming'].includes(call.value.state))
+const canHangup = computed(() => ['outgoing', 'connected', 'incoming'].includes(call.value.state))
 const canSendDtmf = computed(() => call.value.state === 'connected' && !!lastTone.value)
 
 function appendDigit(digit) {
@@ -124,11 +125,11 @@ function clearInput() {
 }
 
 function subscribeEvents() {
-  onEvent('call:state', handleCallEvent)
+  onEvent('call', handleCallEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('call:state', handleCallEvent)
+  offEvent('call', handleCallEvent)
 }
 
 function handleCallEvent(payload) {
