@@ -9,8 +9,6 @@ public final class LinphoneSwiftBridge: NSObject {
         case call
         case message
         case audioRoute
-        case deviceChange
-        case connectivity
     }
 
     private let wrapper: LinphoneCApiWrapper
@@ -93,13 +91,6 @@ public final class LinphoneSwiftBridge: NSObject {
         wrapper.setAudioRoute(route) { error in
             completion(error)
         }
-    }
-
-    public func dispose() {
-        handlerQueue.sync {
-            Event.allCases.forEach { eventHandlers[$0] = [:] }
-        }
-        wrapper.dispose()
     }
 
     public func currentState() -> [String: Any] {
@@ -196,20 +187,5 @@ extension LinphoneSwiftBridge: LinphoneCApiWrapperDelegate {
     public func linphoneWrapper(_ wrapper: LinphoneCApiWrapper,
                                 didUpdateAudioRoute route: String) {
         emit(event: .audioRoute, payload: ["route": route])
-    }
-
-    public func linphoneWrapper(_ wrapper: LinphoneCApiWrapper,
-                                didUpdateAudioDevices devices: [[String: Any]],
-                                active: [String: Any]?) {
-        var payload: [String: Any] = ["devices": devices]
-        if let active {
-            payload["active"] = active
-        }
-        emit(event: .deviceChange, payload: payload)
-    }
-
-    public func linphoneWrapper(_ wrapper: LinphoneCApiWrapper,
-                                didUpdateConnectivity payload: [String: Any]) {
-        emit(event: .connectivity, payload: payload)
     }
 }
