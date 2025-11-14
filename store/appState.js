@@ -32,6 +32,8 @@ const state = reactive({
     startedAt: 0,
     duration: 0,
     audioRoute: 'system',
+    availableRoutes: [],
+    devices: [],
     suggestedRoute: '',
     reason: ''
   },
@@ -112,7 +114,48 @@ export function updateCallState(patch = {}) {
 }
 
 export function setAudioRoute(route) {
-  state.call.audioRoute = route
+  const nextRoute = route || 'system'
+  state.call.audioRoute = nextRoute
+  if (Array.isArray(state.call.devices)) {
+    state.call.devices.forEach((device) => {
+      device.selected = device.type === nextRoute || device.id === nextRoute
+    })
+  }
+  if (nextRoute && Array.isArray(state.call.availableRoutes) && !state.call.availableRoutes.includes(nextRoute)) {
+    state.call.availableRoutes.push(nextRoute)
+  }
+}
+
+export function updateAudioDevices(payload = {}) {
+  const devicesInput = Array.isArray(payload.devices) ? payload.devices : []
+  const normalized = devicesInput.map((device) => {
+    const id = device?.id || device?.name || `device-${Math.random().toString(36).slice(2, 10)}`
+    const name = device?.name || device?.label || id
+    const type = device?.type || device?.route || device?.category || 'unknown'
+    return {
+      id,
+      name,
+      type,
+      selected: !!device?.selected
+    }
+  })
+  state.call.devices = normalized
+  const routes = normalized
+    .map((device) => device.type)
+    .filter((route, index, arr) => route && arr.indexOf(route) === index)
+  const uniqueRoutes = routes.length > 0 ? [...routes] : []
+  if (!uniqueRoutes.includes('system')) {
+    uniqueRoutes.unshift('system')
+  }
+  state.call.availableRoutes = uniqueRoutes
+  if (payload?.activeRoute) {
+    setAudioRoute(payload.activeRoute)
+  } else {
+    const selected = normalized.find((device) => device.selected)
+    if (selected) {
+      setAudioRoute(selected.type || selected.id)
+    }
+  }
 }
 
 export function recordMessageReceived(message) {

@@ -71,6 +71,63 @@
         </view>
       </view>
 
+      <view v-if="isIOSPlatform" class="section">
+        <view class="section__header">
+          <text class="section__title">iOS Bridge Harness</text>
+          <text class="section__subtitle">Drive the Objective-C wrapper from the demo</text>
+        </view>
+        <view class="harness-form">
+          <view class="harness-form__field">
+            <text class="harness-form__label">SIP Server</text>
+            <input class="harness-form__input" v-model="iosHarness.sipServer" placeholder="sip.example.com" />
+          </view>
+          <view class="harness-form__row">
+            <view class="harness-form__field harness-form__field--half">
+              <text class="harness-form__label">Username</text>
+              <input class="harness-form__input" v-model="iosHarness.username" placeholder="Extension" />
+            </view>
+            <view class="harness-form__field harness-form__field--half">
+              <text class="harness-form__label">Password</text>
+              <input class="harness-form__input" v-model="iosHarness.password" password placeholder="Password" />
+            </view>
+          </view>
+          <view class="harness-form__row">
+            <view class="harness-form__field harness-form__field--half">
+              <text class="harness-form__label">Display Name</text>
+              <input class="harness-form__input" v-model="iosHarness.displayName" placeholder="Optional" />
+            </view>
+            <view class="harness-form__field harness-form__field--half">
+              <text class="harness-form__label">Transport</text>
+              <input class="harness-form__input" v-model="iosHarness.transport" placeholder="udp / tcp / tls" />
+            </view>
+          </view>
+          <view class="harness-form__field">
+            <text class="harness-form__label">Test Number / SIP URI</text>
+            <input class="harness-form__input" v-model="iosHarness.testNumber" placeholder="sip:echo@conference.linphone.org" />
+          </view>
+        </view>
+        <view class="button-row button-row--wrap">
+          <button
+            class="button button--primary"
+            :loading="loading.iosRegister"
+            @click="runIosRegistration"
+          >
+            Init &amp; Register
+          </button>
+          <button class="button" :loading="loading.iosCall" @click="dialIosEcho">Dial Test Number</button>
+          <button class="button" :loading="loading.iosState" @click="fetchIosState">Fetch Native State</button>
+          <button class="button button--outline" :loading="loading.iosDispose" @click="disposeIos">
+            Dispose Core
+          </button>
+        </view>
+        <view v-if="iosStateJson" class="ios-state">
+          <text class="ios-state__label">Latest native state snapshot</text>
+          <scroll-view class="ios-state__scroll" scroll-y>
+            <text class="ios-state__code">{{ iosStateJson }}</text>
+          </scroll-view>
+        </view>
+      </view>
+
       <view v-if="isMock" class="section">
         <view class="section__header">
           <text class="section__title">Mock Utilities</text>
@@ -89,12 +146,16 @@
 </template>
 
 <script setup>
-import { computed, reactive } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useAppState, manualNavigate } from '@/store/appState'
 import {
   initService,
   startService,
   stopService,
+  registerAccount,
+  dialNumber,
+  disposeService,
+  getNativeState,
   simulateIncomingCall,
   isUsingMock
 } from '@/services/utssdk'
@@ -103,7 +164,11 @@ const state = useAppState()
 const loading = reactive({
   init: false,
   start: false,
-  stop: false
+  stop: false,
+  iosRegister: false,
+  iosCall: false,
+  iosState: false,
+  iosDispose: false
 })
 
 const service = computed(() => state.service)
@@ -112,6 +177,34 @@ const call = computed(() => state.call)
 const messaging = computed(() => state.messaging)
 const events = computed(() => state.events)
 const isMock = computed(() => isUsingMock())
+
+const iosState = ref(null)
+const iosHarness = reactive({
+  sipServer: 'sip.linphone.org',
+  username: '',
+  password: '',
+  displayName: 'iOS Demo',
+  transport: 'tls',
+  testNumber: 'sip:echo@conference.linphone.org'
+})
+
+const systemInfo = (() => {
+  try {
+    if (typeof uni !== 'undefined' && typeof uni.getSystemInfoSync === 'function') {
+      return uni.getSystemInfoSync()
+    }
+  } catch (error) {
+    // ignore runtime failures
+  }
+  return {}
+})()
+
+const isIOSPlatform = computed(() => {
+  const platform = (systemInfo.platform || systemInfo.osName || '').toLowerCase()
+  return platform === 'ios' || platform === 'iphone' || platform === 'ipad'
+})
+
+const iosStateJson = computed(() => (iosState.value ? JSON.stringify(iosState.value, null, 2) : ''))
 
 const serviceStatusLabel = computed(() => (service.value.running ? 'Running' : 'Stopped'))
 const registrationLabel = computed(() => registration.value.status || 'idle')
@@ -174,6 +267,57 @@ async function simulateIncoming() {
     icon: 'none'
   })
 }
+
+function buildIosRegistrationPayload() {
+  return {
+    username: iosHarness.username,
+    password: iosHarness.password,
+    domain: iosHarness.sipServer,
+    displayName: iosHarness.displayName,
+    transport: iosHarness.transport
+  }
+}
+
+function runIosRegistration() {
+  const payload = buildIosRegistrationPayload()
+  if (!payload.username || !payload.password || !payload.domain) {
+    uni.showToast({ title: 'Provide username, password and server', icon: 'none' })
+    return
+  }
+  runWithLoading('iosRegister', async () => {
+    await initService({ debug: true, transport: payload.transport })
+    await startService()
+    await registerAccount(payload)
+    uni.showToast({ title: 'Registration requested', icon: 'none' })
+  })
+}
+
+function dialIosEcho() {
+  if (!iosHarness.testNumber) {
+    uni.showToast({ title: 'Set a test number first', icon: 'none' })
+    return
+  }
+  runWithLoading('iosCall', async () => {
+    await dialNumber({ number: iosHarness.testNumber })
+    uni.showToast({ title: 'Dialing echo service', icon: 'none' })
+  })
+}
+
+function fetchIosState() {
+  runWithLoading('iosState', async () => {
+    const snapshot = await getNativeState()
+    iosState.value = snapshot || {}
+    uni.showToast({ title: 'State refreshed', icon: 'none' })
+  })
+}
+
+function disposeIos() {
+  runWithLoading('iosDispose', async () => {
+    await disposeService()
+    iosState.value = null
+    uni.showToast({ title: 'Native core disposed', icon: 'none' })
+  })
+}
 </script>
 
 <style scoped>
@@ -227,6 +371,76 @@ async function simulateIncoming() {
   background-color: #ffffff;
   color: #dc2626;
   border: 1px solid #fecaca;
+}
+
+.button-row--wrap {
+  flex-wrap: wrap;
+}
+
+.harness-form {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  box-shadow: 0 8rpx 20rpx rgba(15, 23, 42, 0.08);
+  margin-bottom: 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.harness-form__row {
+  display: flex;
+  gap: 20rpx;
+  flex-wrap: wrap;
+}
+
+.harness-form__field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.harness-form__field--half {
+  min-width: 240rpx;
+  flex: 1;
+}
+
+.harness-form__label {
+  font-size: 24rpx;
+  color: #475569;
+}
+
+.harness-form__input {
+  background-color: #f8fafc;
+  border-radius: 12rpx;
+  padding: 20rpx;
+  border: 1px solid #e2e8f0;
+  font-size: 26rpx;
+}
+
+.ios-state {
+  background-color: #0f172a;
+  border-radius: 16rpx;
+  padding: 24rpx;
+  color: #e0f2fe;
+  margin-top: 16rpx;
+}
+
+.ios-state__label {
+  font-size: 26rpx;
+  font-weight: 600;
+  margin-bottom: 16rpx;
+}
+
+.ios-state__scroll {
+  max-height: 240rpx;
+}
+
+.ios-state__code {
+  font-family: 'Courier New', monospace;
+  font-size: 24rpx;
+  white-space: pre-wrap;
 }
 
 .status-grid {

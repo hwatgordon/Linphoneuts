@@ -89,12 +89,29 @@ const loading = reactive({
 const elapsedMs = ref(0)
 let timer = null
 
-const audioRoutes = [
-  { value: 'system', label: 'System' },
-  { value: 'earpiece', label: 'Earpiece' },
-  { value: 'speaker', label: 'Speaker' },
-  { value: 'bluetooth', label: 'Bluetooth' }
-]
+const audioRouteLabels = {
+  system: 'System',
+  earpiece: 'Earpiece',
+  speaker: 'Speaker',
+  bluetooth: 'Bluetooth',
+  unknown: 'Unknown'
+}
+
+const audioRoutes = computed(() => {
+  if (Array.isArray(call.value.devices) && call.value.devices.length > 0) {
+    return call.value.devices.map((device) => ({
+      value: device.type || device.id,
+      label: device.name || audioRouteLabels[device.type] || device.type || device.id
+    }))
+  }
+  const fallback = call.value.availableRoutes && call.value.availableRoutes.length > 0
+    ? call.value.availableRoutes
+    : ['system', 'earpiece', 'speaker', 'bluetooth']
+  return fallback.map((route) => ({
+    value: route,
+    label: audioRouteLabels[route] || route
+  }))
+})
 
 const isIncoming = computed(() => call.value.state === 'incoming')
 const canHangup = computed(() => ['connected', 'dialing', 'incoming'].includes(call.value.state))

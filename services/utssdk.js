@@ -4,6 +4,7 @@ import {
   updateRegistrationState,
   updateCallState,
   setAudioRoute,
+  updateAudioDevices,
   recordMessageReceived,
   markMessageSent,
   markMessageError,
@@ -200,6 +201,14 @@ function handleNativeEvent(event, payload = {}) {
         setAudioRoute(payload.route)
       }
       break
+    case 'device:audio':
+    case 'audio:device':
+    case 'audio:devices':
+    case 'device:list':
+    case 'device:update':
+    case 'device':
+      updateAudioDevices(payload)
+      break
     case 'message:received':
       recordMessageReceived(payload)
       break
@@ -295,6 +304,23 @@ export async function stopService() {
     handleNativeEvent('call:state', { state: 'idle', suggestedRoute: '/pages/test/index' })
   }
   return result
+}
+
+export async function disposeService(options) {
+  logAction('Dispose service', options)
+  const result = await callClientMethod('dispose', options)
+  if (result !== false) {
+    handleNativeEvent('service:state', { running: false, initialized: false })
+    handleNativeEvent('registration:state', { status: 'none' })
+    handleNativeEvent('call:state', { state: 'idle' })
+    handleNativeEvent('device:audio', { devices: [], activeRoute: 'system' })
+  }
+  return result
+}
+
+export async function getNativeState() {
+  logAction('Fetch native state snapshot')
+  return callClientMethod('getState')
 }
 
 export async function registerAccount(payload) {
