@@ -1,0 +1,146 @@
+[
+  {
+    "name": "init",
+    "kind": "method",
+    "signature": "init(config?: LinphoneConfig): Promise<boolean>",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.initialize (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L28-L63) → LinphoneManager.initialize (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L39-L45); Android: LinphoneBridge.initialize (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L28-L64) → LinphoneManager.initialize (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L49-L56). TODO: integrate real Linphone SDK startup."
+  },
+  {
+    "name": "register",
+    "kind": "method",
+    "signature": "register(): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.register (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L73-L75) → LinphoneManager.register (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L48-L57); Android: LinphoneBridge.register (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L82-L84) → LinphoneManager.register (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L59-L64). TODO: replace simulated registration flow."
+  },
+  {
+    "name": "unregister",
+    "kind": "method",
+    "signature": "unregister(): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.unregister (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L77-L79) → LinphoneManager.unregister (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L61-L66); Android: LinphoneBridge.unregister (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L86-L89) → LinphoneManager.unregister (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L67-L70)."
+  },
+  {
+    "name": "dial",
+    "kind": "method",
+    "signature": "dial(number: string): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.callDial (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L81-L83) → LinphoneManager.dial (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L69-L80); Android: LinphoneBridge.callDial (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L92-L94) → LinphoneManager.dial (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L73-L79). TODO: bridge real call setup."
+  },
+  {
+    "name": "hangup",
+    "kind": "method",
+    "signature": "hangup(): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.callHangup (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L85-L87) → LinphoneManager.hangup (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L84-L90); Android: LinphoneBridge.callHangup (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L96-L99) → LinphoneManager.hangup (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L91-L95)."
+  },
+  {
+    "name": "answer",
+    "kind": "method",
+    "signature": "answer(): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.callAnswer (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L89-L91) → LinphoneManager.answer (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L93-L99); Android: LinphoneBridge.callAnswer (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L102-L104) → LinphoneManager.answer (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L82-L88)."
+  },
+  {
+    "name": "sendDtmf",
+    "kind": "method",
+    "signature": "sendDtmf(tone: string): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.sendDtmf (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L93-L95) → LinphoneManager.sendDtmf (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L102-L109); Android: LinphoneBridge.sendDtmf (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L107-L109) → LinphoneManager.sendDtmf (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L98-L104)."
+  },
+  {
+    "name": "sendMessage",
+    "kind": "method",
+    "signature": "sendMessage(recipient: string, text: string): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.messageSend (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L97-L99) → LinphoneManager.sendMessage (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L113-L124); Android: LinphoneBridge.messageSend (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L112-L114) → LinphoneManager.sendMessage (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L107-L115). TODO: replace mock messaging payloads."
+  },
+  {
+    "name": "setAudioRoute",
+    "kind": "method",
+    "signature": "setAudioRoute(route: AudioRoute): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.audioSetRoute (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L101-L112) uses AudioRouter.setRoute (uni_modules/utssdk/app-ios/src/AudioRouter.swift#L17-L53) and LinphoneManager.updateAudioRoute (uni_modules/utssdk/app-ios/src/LinphoneManager.swift#L127-L132); Android: LinphoneBridge.audioSetRoute (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L117-L131) uses AudioRouter.applyRoute (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/AudioRouter.kt#L22-L61) and LinphoneManager.updateAudioRoute (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneManager.kt#L119-L123)."
+  },
+  {
+    "name": "addEventListener",
+    "kind": "method",
+    "signature": "addEventListener(eventName: string, handler: EventHandler): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "UTS listener registry: uni_modules/utssdk/utssdk/index.uts#L217-L225; iOS: LinphoneBridge.setEventCallback/clearEventCallback (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L65-L71); Android: LinphoneBridge.setEventCallback/setEventListener/clearEventCallback (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L67-L79)."
+  },
+  {
+    "name": "removeEventListener",
+    "kind": "method",
+    "signature": "removeEventListener(eventName: string, handler: EventHandler): void",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "UTS cleanup logic: uni_modules/utssdk/utssdk/index.uts#L227-L248; iOS: LinphoneBridge.clearEventCallback (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L69-L71); Android: LinphoneBridge.clearEventCallback/setEventListener(null) (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L67-L79)."
+  },
+  {
+    "name": "permission",
+    "kind": "event",
+    "signature": "Event payload: { resource: string, status: 'granted' | 'denied' }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS emission in LinphoneBridge.initialize (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L33-L55); Android emission in LinphoneBridge.initialize with ensureMicrophonePermission (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L33-L56). TODO: Android still lacks runtime permission request (see #L134-L145)."
+  },
+  {
+    "name": "registration",
+    "kind": "event",
+    "signature": "Event payload: { state: string, message?: string }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneBridge.initialize and LinphoneManager.didUpdateRegistration (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L58-L62 & #L158-L164); Android: LinphoneBridge.initialize and onRegistrationStateChanged (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L58-L63 & #L168-L174)."
+  },
+  {
+    "name": "call",
+    "kind": "event",
+    "signature": "Event payload: { state: string, ...callContext }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneManager.didUpdateCall emits call info (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L166-L170); Android: onCallStateChanged mirrors payload (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L176-L180)."
+  },
+  {
+    "name": "message",
+    "kind": "event",
+    "signature": "Event payload: { direction: string, to?: string, text?: string, ... }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: LinphoneManager.didReceiveMessage (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L172-L174); Android: onMessage (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L182-L184). TODO: hook into actual Linphone messaging once available."
+  },
+  {
+    "name": "audioRoute",
+    "kind": "event",
+    "signature": "Event payload: { route: 'system' | 'speaker' | 'earpiece' | 'bluetooth' }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: audioSetRoute and LinphoneManager.didChangeAudioRoute emit updates (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L101-L112 & #L176-L179); Android: audioSetRoute and onAudioRoute emit updates (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L117-L131 & #L186-L188)."
+  },
+  {
+    "name": "error",
+    "kind": "event",
+    "signature": "Event payload: { category: string, message: string }",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "iOS: emitError and LinphoneManager.didFailWith (uni_modules/utssdk/app-ios/src/LinphoneBridge.swift#L144-L154 & #L182-L184) plus permission denial handling (#L37-L48); Android: emitError and onError (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/LinphoneBridge.kt#L154-L192)."
+  },
+  {
+    "name": "AudioRoutes",
+    "kind": "constant",
+    "signature": "const AudioRoutes: Record<string, AudioRoute>",
+    "ios": "implemented",
+    "android": "implemented",
+    "notes": "Defined in UTS index (uni_modules/utssdk/utssdk/index.uts#L108-L113); iOS AudioRoute enum mirrors strings (uni_modules/utssdk/app-ios/src/AudioRouter.swift#L4-L11); Android AudioRouter.Route enum mirrors strings (uni_modules/utssdk/app-android/src/main/java/com/utssdk/linphone/AudioRouter.kt#L9-L19)."
+  }
+]
