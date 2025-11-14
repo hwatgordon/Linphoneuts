@@ -218,6 +218,42 @@ export default {
 };
 ```
 
+#### Core Service Event Bus Logging
+
+```ts
+import { init, on, off, once, emit } from '@/utssdk/index.uts';
+
+async function bootstrap() {
+  await init({
+    sipServer: 'sip.example.com',
+    username: '1001',
+    password: 'secret'
+  });
+
+  const logRegistration = (payload) => {
+    console.info('[registration]', payload.state, payload.detail, payload.error);
+  };
+
+  const logCallOnce = (payload) => {
+    console.info('[call]', payload.state, payload.number, payload.direction);
+  };
+
+  on('registration', logRegistration);
+  once('call', logCallOnce);
+
+  // Simulate an incoming event before native hooks are ready
+  emit('connectivity', {
+    status: 'online',
+    timestamp: Date.now()
+  });
+
+  // Later, clean up listeners
+  off('registration', logRegistration);
+}
+
+bootstrap();
+```
+
 ## Testing
 
 ### Running Tests
