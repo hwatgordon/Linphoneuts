@@ -15,9 +15,9 @@ object LinphoneBridge : LinphoneManager.Callback {
         fun onError(category: String, message: String)
     }
 
-    private val manager = LinphoneManager()
+    private val manager = LinphoneManager
     private val audioRouter = AudioRouter()
-    private val mainHandler = Handler(Looper.getMainLooper())
+
 
     private var applicationContext: Context? = null
     private var listener: LinphoneEventListener? = null
@@ -46,7 +46,16 @@ object LinphoneBridge : LinphoneManager.Callback {
             "Application context must be set before calling initialize"
         }
 
-        manager.initialize(safeContext, config ?: emptyMap())
+        val configMap = config ?: emptyMap()
+        val serviceConfig = LinphoneConfig.from(configMap)
+
+        manager.initialize(safeContext, configMap)
+        try {
+            LinphoneService.start(safeContext, serviceConfig)
+        } catch (throwable: Throwable) {
+            emitError("service", throwable)
+        }
+
         emitEvent(
             type = "permission",
             payload = mapOf(
@@ -61,25 +70,25 @@ object LinphoneBridge : LinphoneManager.Callback {
                 "message" to "Initialized"
             )
         )
-    }
+        }
 
-    @JvmStatic
-    fun setEventListener(listener: LinphoneEventListener?) {
+        @JvmStatic
+        fun setEventListener(listener: LinphoneEventListener?) {
         this.listener = listener
-    }
+        }
 
-    @JvmStatic
-    fun setEventCallback(callback: Function2<String, Map<String, Any?>, Unit>?) {
+        @JvmStatic
+        fun setEventCallback(callback: Function2<String, Map<String, Any?>, Unit>?) {
         this.eventCallback = callback
-    }
+        }
 
-    @JvmStatic
-    fun clearEventCallback() {
+        @JvmStatic
+        fun clearEventCallback() {
         this.eventCallback = null
-    }
+        }
 
-    @JvmStatic
-    fun register() {
+        @JvmStatic
+
         manager.register()
     }
 
