@@ -24,6 +24,31 @@
         android:required="false" />
 
     <application>
+        <activity
+            android:name=".ui.IncomingCallActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showOnLockScreen="true"
+            android:taskAffinity="com.utssdk.linphone.calls"
+            android:theme="@style/Theme.Linphone.IncomingCall"
+            android:turnScreenOn="true" />
+
+        <activity
+            android:name=".ui.LockScreenIncomingCallActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showOnLockScreen="true"
+            android:showForAllUsers="true"
+            android:taskAffinity="com.utssdk.linphone.calls.lock"
+            android:theme="@style/Theme.Linphone.LockScreenCall"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".service.LinphoneForegroundService"
             android:enabled="true"

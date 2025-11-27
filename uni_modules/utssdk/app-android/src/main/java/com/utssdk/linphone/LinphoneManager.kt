@@ -12,7 +12,6 @@ import org.linphone.core.CoreListenerStub
 import org.linphone.core.ErrorInfo
 import org.linphone.core.Factory
 import org.linphone.core.LogCollectionState
-import org.linphone.core.Address
 import org.linphone.core.RegistrationState as CoreRegistrationState
 import org.linphone.core.Call.State as CoreCallState
 import java.io.File

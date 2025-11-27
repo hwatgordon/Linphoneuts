@@ -21,8 +21,8 @@ abstract class BaseIncomingCallActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(layoutResId)
         configureWindow()
+        setContentView(layoutResId)
         bindViews()
         bindCallInfo(intent)
     }

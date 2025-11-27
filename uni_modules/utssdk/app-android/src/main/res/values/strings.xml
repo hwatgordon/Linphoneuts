@@ -3,4 +3,11 @@
     <string name="linphone_notification_channel_id">linphone_calls</string>
     <string name="linphone_notification_channel_name">Linphone Calls</string>
     <string name="linphone_notification_channel_description">Notifications for ongoing Linphone calls</string>
+    <string name="linphone_foreground_notification_title">Linphone Service</string>
+    <string name="linphone_foreground_notification_message">Listening for incoming calls</string>
+    <string name="linphone_incoming_call_title">Incoming call</string>
+    <string name="linphone_incoming_call_unknown">Unknown caller</string>
+    <string name="linphone_incoming_call_answer">Answer</string>
+    <string name="linphone_incoming_call_decline">Hang up</string>
+    <string name="linphone_lock_screen_hint">Unlock to manage the call</string>
 </resources>

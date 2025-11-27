@@ -3,6 +3,8 @@ type JsonRecord = Record<string, any>
 type EventHandler = (payload: JsonRecord) => void
 
 type NativeBridge = {
+    initPlugin?: (config: JsonRecord) => any,
+    disposePlugin?: () => void,
     initialize?: (config: JsonRecord) => any,
     register?: () => void,
     unregister?: () => void,
@@ -27,6 +29,7 @@ const listeners: Map<string, Set<EventHandler>> = new Map()
 let bridgeInstance: NativeBridge | null = null
 let activePluginName: string | null = null
 let eventPumpInstalled = false
+let pluginBootstrapped = false
 
 function getBridge(): NativeBridge | null {
     if (bridgeInstance) {
@@ -102,6 +105,50 @@ function notifyMissingBridge(operation: string) {
     console.warn(`[linphone] Ignoring ${operation} call because the native bridge (${pluginId}) is unavailable`)
 }
 
+function bootstrapNativePlugin(config: JsonRecord): boolean {
+    if (pluginBootstrapped && Object.keys(config ?? {}).length === 0) {
+        return true
+    }
+
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.initPlugin !== 'function') {
+        notifyMissingBridge('initPlugin')
+        return false
+    }
+
+    ensureEventPump()
+
+    try {
+        const result = bridge.initPlugin(config)
+        pluginBootstrapped = result !== false
+        return pluginBootstrapped
+    } catch (error) {
+        console.error('[linphone] Failed to bootstrap native plugin', error)
+        handleNativeEvent('error', {
+            category: 'initPlugin',
+            message: `${error}`
+        })
+        pluginBootstrapped = false
+        return false
+    }
+}
+
+function disposeNativePlugin() {
+    const bridge = getBridge()
+    if (!bridge || typeof bridge.disposePlugin !== 'function') {
+        pluginBootstrapped = false
+        return
+    }
+
+    try {
+        bridge.disposePlugin()
+    } catch (error) {
+        console.error('[linphone] Failed to dispose native plugin', error)
+    } finally {
+        pluginBootstrapped = false
+    }
+}
+
 export type LinphoneConfig = JsonRecord
 export type AudioRoute = 'system' | 'speaker' | 'earpiece' | 'bluetooth'
 
@@ -112,7 +159,17 @@ export const AudioRoutes: Record<string, AudioRoute> = {
     BLUETOOTH: 'bluetooth'
 }
 
+export function bootstrap(config: LinphoneConfig = {}): boolean {
+    return bootstrapNativePlugin(config)
+}
+
+export function shutdown(): void {
+    disposeNativePlugin()
+}
+
 export async function init(config: LinphoneConfig = {}): Promise<boolean> {
+    bootstrapNativePlugin(config)
+
     const bridge = getBridge()
     if (!bridge || typeof bridge.initialize !== 'function') {
         notifyMissingBridge('init')
