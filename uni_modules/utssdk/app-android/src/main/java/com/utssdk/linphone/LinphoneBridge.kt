@@ -8,6 +8,8 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import kotlin.jvm.functions.Function2
 
+import com.utssdk.linphone.LinphoneConfig
+
 object LinphoneBridge : LinphoneManager.Callback {
 
     interface LinphoneEventListener {
@@ -45,8 +47,9 @@ object LinphoneBridge : LinphoneManager.Callback {
         val safeContext = requireNotNull(applicationContext) {
             "Application context must be set before calling initialize"
         }
+        val resolvedConfig = LinphoneConfig.from(config ?: emptyMap())
 
-        manager.initialize(safeContext, config ?: emptyMap())
+        manager.init(safeContext, resolvedConfig)
         emitEvent(
             type = "permission",
             payload = mapOf(
@@ -76,6 +79,12 @@ object LinphoneBridge : LinphoneManager.Callback {
     @JvmStatic
     fun clearEventCallback() {
         this.eventCallback = null
+    }
+
+    @JvmStatic
+    fun destroy() {
+        manager.destroy()
+        applicationContext = null
     }
 
     @JvmStatic
