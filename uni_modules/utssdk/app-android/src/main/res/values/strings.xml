@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="linphone_notification_channel_id">linphone_calls</string>
+    <string name="linphone_notification_channel_name">Linphone Calls</string>
+    <string name="linphone_notification_channel_description">Notifications for ongoing Linphone calls</string>
+</resources>
