@@ -69,7 +69,6 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useAppState } from '@/store/appState'
 import {
   answerCall,
-  declineCall,
   hangupCall,
   setAudioOutput,
   on as onEvent,
@@ -114,18 +113,20 @@ const audioRoutes = computed(() => {
 })
 
 const isIncoming = computed(() => call.value.state === 'incoming')
-const canHangup = computed(() => ['connected', 'dialing', 'incoming'].includes(call.value.state))
+const canHangup = computed(() => ['connected', 'outgoing', 'incoming'].includes(call.value.state))
 
 const stateLabel = computed(() => {
   switch (call.value.state) {
     case 'incoming':
       return 'Incoming call'
-    case 'dialing':
+    case 'outgoing':
       return 'Dialing...'
     case 'connected':
       return 'Connected'
     case 'ended':
       return call.value.reason ? `Ended (${call.value.reason})` : 'Call ended'
+    case 'error':
+      return call.value.reason ? `Error (${call.value.reason})` : 'Call error'
     default:
       return call.value.state || 'Idle'
   }
@@ -185,13 +186,13 @@ function formatDuration(ms) {
 }
 
 function subscribeEvents() {
-  onEvent('call:state', handleCallEvent)
-  onEvent('call:audio-route', handleAudioRouteEvent)
+  onEvent('call', handleCallEvent)
+  onEvent('audioRoute', handleAudioRouteEvent)
 }
 
 function unsubscribeEvents() {
-  offEvent('call:state', handleCallEvent)
-  offEvent('call:audio-route', handleAudioRouteEvent)
+  offEvent('call', handleCallEvent)
+  offEvent('audioRoute', handleAudioRouteEvent)
 }
 
 function handleCallEvent(payload) {
@@ -238,7 +239,7 @@ function handleAnswer() {
 }
 
 function handleDecline() {
-  withLoading('decline', () => declineCall())
+  withLoading('decline', () => hangupCall())
 }
 
 function handleHangup() {
