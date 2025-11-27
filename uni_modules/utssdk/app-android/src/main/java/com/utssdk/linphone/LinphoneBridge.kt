@@ -9,6 +9,8 @@ import androidx.core.content.ContextCompat
 import kotlin.jvm.functions.Function2
 
 import com.utssdk.linphone.LinphoneConfig
+import com.utssdk.linphone.service.LinphoneForegroundService
+import com.utssdk.linphone.ui.CallUiController
 
 object LinphoneBridge : LinphoneManager.Callback {
 
@@ -50,6 +52,7 @@ object LinphoneBridge : LinphoneManager.Callback {
         val resolvedConfig = LinphoneConfig.from(config ?: emptyMap())
 
         manager.init(safeContext, resolvedConfig)
+        LinphoneForegroundService.start(safeContext)
         emitEvent(
             type = "permission",
             payload = mapOf(
@@ -64,6 +67,16 @@ object LinphoneBridge : LinphoneManager.Callback {
                 "message" to "Initialized"
             )
         )
+    }
+
+    @JvmStatic
+    fun initPlugin(context: Context, config: Map<String, Any?>? = emptyMap()) {
+        initialize(context, config)
+    }
+
+    @JvmStatic
+    fun disposePlugin() {
+        destroy()
     }
 
     @JvmStatic
@@ -83,8 +96,12 @@ object LinphoneBridge : LinphoneManager.Callback {
 
     @JvmStatic
     fun destroy() {
+        CallUiController.dismiss("destroy")
+        manager.setCallback(null)
         manager.destroy()
+        applicationContext?.let { LinphoneForegroundService.stop(it) }
         applicationContext = null
+        listener = null
     }
 
     @JvmStatic
@@ -186,6 +203,18 @@ object LinphoneBridge : LinphoneManager.Callback {
         val payload = info.toMutableMap()
         payload["state"] = state.wireName
         emitEvent("call", payload)
+
+        when (state) {
+            LinphoneManager.CallState.INCOMING -> {
+                applicationContext?.let { context ->
+                    CallUiController.showIncomingCallUi(context, payload)
+                }
+            }
+            LinphoneManager.CallState.ESTABLISHED,
+            LinphoneManager.CallState.ENDED,
+            LinphoneManager.CallState.FAILED -> CallUiController.dismiss(state.wireName)
+            else -> Unit
+        }
     }
 
     override fun onMessage(payload: Map<String, Any?>) {
@@ -194,6 +223,14 @@ object LinphoneBridge : LinphoneManager.Callback {
 
     override fun onAudioRoute(route: AudioRouter.Route) {
         emitEvent("audioRoute", mapOf("route" to route.wireName))
+    }
+
+    override fun onDeviceChange(payload: Map<String, Any?>) {
+        emitEvent("deviceChange", payload)
+    }
+
+    override fun onConnectivityChanged(payload: Map<String, Any?>) {
+        emitEvent("connectivity", payload)
     }
 
     override fun onError(category: String, throwable: Throwable) {

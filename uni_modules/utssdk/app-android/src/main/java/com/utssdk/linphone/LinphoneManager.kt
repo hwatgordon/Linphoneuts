@@ -3,11 +3,16 @@ package com.utssdk.linphone
 import android.content.Context
 import android.util.Log
 import org.linphone.core.Account
+import org.linphone.core.AudioDevice
 import org.linphone.core.Call
+import org.linphone.core.ChatMessage
+import org.linphone.core.ChatRoom
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
+import org.linphone.core.ErrorInfo
 import org.linphone.core.Factory
 import org.linphone.core.LogCollectionState
+import org.linphone.core.Address
 import org.linphone.core.RegistrationState as CoreRegistrationState
 import org.linphone.core.Call.State as CoreCallState
 import java.io.File
@@ -41,6 +46,8 @@ class LinphoneManager {
         fun onCallStateChanged(state: CallState, info: Map<String, Any?>)
         fun onMessage(payload: Map<String, Any?>)
         fun onAudioRoute(route: AudioRouter.Route)
+        fun onDeviceChange(payload: Map<String, Any?>)
+        fun onConnectivityChanged(payload: Map<String, Any?>)
         fun onError(category: String, throwable: Throwable)
     }
 
@@ -90,13 +97,51 @@ class LinphoneManager {
             val payload = mutableMapOf<String, Any?>(
                 "id" to call.callLog?.callId,
                 "remote" to call.remoteAddress?.asStringUriOnly(),
-                "direction" to call.dir.name.lowercase()
+                "direction" to call.dir.name.lowercase(),
+                "displayName" to call.remoteAddress?.displayName,
+                "number" to call.remoteAddress?.userName
             )
             if (!message.isNullOrEmpty()) {
                 payload["message"] = message
             }
             currentCallInfo = payload
             callback?.onCallStateChanged(state.toManagerState(), payload)
+        }
+
+        override fun onMessageReceived(
+            lc: Core,
+            chatRoom: ChatRoom,
+            message: ChatMessage
+        ) {
+            callback?.onMessage(buildMessageEventPayload("received", message))
+        }
+
+        override fun onMessageSent(
+            lc: Core,
+            chatRoom: ChatRoom,
+            message: ChatMessage
+        ) {
+            callback?.onMessage(buildMessageEventPayload("sent", message))
+        }
+
+        override fun onMessageSendingFailed(
+            lc: Core,
+            chatRoom: ChatRoom,
+            message: ChatMessage
+        ) {
+            callback?.onMessage(buildMessageEventPayload("failed", message, message.errorInfo))
+        }
+
+        override fun onAudioDeviceChanged(lc: Core, audioDevice: AudioDevice) {
+            callback?.onAudioRoute(audioDevice.toRoute())
+        }
+
+        override fun onAudioDevicesListUpdated(lc: Core) {
+            callback?.onDeviceChange(buildDeviceChangePayload(lc))
+        }
+
+        override fun onNetworkReachable(lc: Core, reachable: Boolean) {
+            callback?.onConnectivityChanged(buildConnectivityPayload(reachable))
         }
     }
 
@@ -346,6 +391,72 @@ class LinphoneManager {
         CoreCallState.Released -> CallState.ENDED
         CoreCallState.Error -> CallState.FAILED
     }
+
+    private fun buildMessageEventPayload(event: String, message: ChatMessage, errorInfo: ErrorInfo? = null): Map<String, Any?> {
+        val payload = mutableMapOf<String, Any?>(
+            "event" to event,
+            "payload" to message.toMessagePayload()
+        )
+        if (errorInfo != null) {
+            payload["error"] = mapOf(
+                "reason" to errorInfo.reason?.name,
+                "code" to errorInfo.protocolCode,
+                "phrase" to errorInfo.phrase
+            )
+        }
+        return payload
+    }
+
+    private fun ChatMessage.toMessagePayload(): Map<String, Any?> = mapOf(
+        "from" to fromAddress?.asStringUriOnly(),
+        "to" to toAddress?.asStringUriOnly(),
+        "text" to (textContent ?: utf8Text ?: ""),
+        "id" to messageId,
+        "time" to time
+    )
+
+    private fun AudioDevice.toRoute(): AudioRouter.Route {
+        val typeName = type?.name?.lowercase() ?: ""
+        return when {
+            typeName.contains("bluetooth") -> AudioRouter.Route.BLUETOOTH
+            typeName.contains("speaker") || typeName.contains("loud") -> AudioRouter.Route.SPEAKER
+            typeName.contains("ear") || typeName.contains("receiver") || typeName.contains("handset") -> AudioRouter.Route.EARPIECE
+            else -> AudioRouter.Route.SYSTEM
+        }
+    }
+
+    private fun buildDeviceChangePayload(core: Core): Map<String, Any?> {
+        val focusedDevice = determineActiveAudioDevice(core)
+        val audioDevices = core.audioDevices?.map { device ->
+            device.toDescriptor(device === focusedDevice)
+        } ?: emptyList()
+        val activeDevice = focusedDevice?.toDescriptor(true)
+        return mapOf(
+            "devices" to audioDevices,
+            "active" to activeDevice
+        )
+    }
+
+    private fun determineActiveAudioDevice(core: Core): AudioDevice? {
+        return core.currentCall?.outputAudioDevice ?: core.outputAudioDevice ?: core.defaultOutputAudioDevice
+    }
+
+    private fun AudioDevice.toDescriptor(selected: Boolean = false): Map<String, Any?> {
+        val label = deviceName ?: driverName ?: type?.name ?: "unknown"
+        val identifier = id?.takeIf { it >= 0 }?.toString() ?: label
+        return mapOf(
+            "id" to identifier,
+            "label" to label,
+            "type" to type?.name?.lowercase(),
+            "driver" to driverName,
+            "selected" to selected
+        )
+    }
+
+    private fun buildConnectivityPayload(reachable: Boolean): Map<String, Any?> = mapOf(
+        "status" to if (reachable) "online" else "offline",
+        "detail" to mapOf("reachable" to reachable)
+    )
 
     private fun simulateDelay(durationMs: Long) {
         try {
