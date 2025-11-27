@@ -55,6 +55,13 @@
             android:exported="false"
             android:foregroundServiceType="phoneCall" />
 
+        <provider
+            android:name=".LinphonePluginInitializer"
+            android:authorities="${applicationId}.linphone.initializer"
+            android:enabled="true"
+            android:exported="false"
+            android:initOrder="100" />
+
         <meta-data
             android:name="com.utssdk.linphone.NOTIFICATION_CHANNEL_ID"
             android:value="@string/linphone_notification_channel_id" />
