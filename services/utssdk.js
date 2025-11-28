@@ -21,6 +21,8 @@ const PLUGIN_ALIASES = [
 ]
 
 const METHOD_ALIASES = {
+  bootstrap: ['bootstrap', 'initPlugin'],
+  shutdown: ['shutdown', 'disposePlugin'],
   init: ['init'],
   dispose: ['dispose'],
   register: ['register'],
@@ -802,40 +804,78 @@ function handleConnectivity(payload = {}) {
 }
 
 function applySnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') {
-    return
-  }
+    if (!snapshot || typeof snapshot !== 'object') {
+        return
+    }
 
-  if (snapshot.service && typeof snapshot.service === 'object') {
-    updateServiceState(snapshot.service)
-  } else if (typeof snapshot.initialized === 'boolean' || typeof snapshot.running === 'boolean') {
-    updateServiceState({
-      initialized: Boolean(snapshot.initialized),
-      running: snapshot.running != null ? Boolean(snapshot.running) : undefined
+    if (snapshot.service && typeof snapshot.service === 'object') {
+        updateServiceState(snapshot.service)
+    } else if (typeof snapshot.initialized === 'boolean' || typeof snapshot.running === 'boolean') {
+        updateServiceState({
+            initialized: Boolean(snapshot.initialized),
+            running: snapshot.running != null ? Boolean(snapshot.running) : undefined
+        })
+    }
+
+    if (snapshot.registration) {
+        handleRegistration(snapshot.registration)
+    }
+    if (snapshot.call) {
+        handleCall(snapshot.call)
+    }
+    if (snapshot.audioRoute) {
+        handleAudioRoute(snapshot.audioRoute)
+    } else if (snapshot.audio && snapshot.audio.route) {
+        handleAudioRoute(snapshot.audio)
+    }
+    if (snapshot.devices) {
+        handleDeviceChange({ devices: snapshot.devices, active: snapshot.activeDevice })
+    }
+    if (snapshot.messaging) {
+        if (snapshot.messaging.lastError) {
+            markMessageError(snapshot.messaging.lastError)
+        }
+        if (snapshot.messaging.lastSent) {
+            markMessageSent(snapshot.messaging.lastSent)
+        }
+    }
+}
+
+export async function bootstrapPlugin(config = {}) {
+  logAction('Bootstrap native UTS plugin', config)
+  try {
+    const result = await callNative('bootstrap', [config], {
+      label: 'bootstrap',
+      toastOnError: false,
+      logSuccess: false
     })
+    return result !== false
+  } catch (error) {
+    logEvent({
+      level: 'warn',
+      message: 'Bootstrap call failed',
+      data: { error: normalizeError(error) },
+      context: 'utssdk'
+    })
+    return false
   }
+}
 
-  if (snapshot.registration) {
-    handleRegistration(snapshot.registration)
-  }
-  if (snapshot.call) {
-    handleCall(snapshot.call)
-  }
-  if (snapshot.audioRoute) {
-    handleAudioRoute(snapshot.audioRoute)
-  } else if (snapshot.audio && snapshot.audio.route) {
-    handleAudioRoute(snapshot.audio)
-  }
-  if (snapshot.devices) {
-    handleDeviceChange({ devices: snapshot.devices, active: snapshot.activeDevice })
-  }
-  if (snapshot.messaging) {
-    if (snapshot.messaging.lastError) {
-      markMessageError(snapshot.messaging.lastError)
-    }
-    if (snapshot.messaging.lastSent) {
-      markMessageSent(snapshot.messaging.lastSent)
-    }
+export async function shutdownPlugin() {
+  logAction('Shutdown native UTS plugin')
+  try {
+    await callNative('shutdown', [], {
+      label: 'shutdown',
+      toastOnError: false,
+      logSuccess: false
+    })
+  } catch (error) {
+    logEvent({
+      level: 'warn',
+      message: 'Shutdown call failed',
+      data: { error: normalizeError(error) },
+      context: 'utssdk'
+    })
   }
 }
 
